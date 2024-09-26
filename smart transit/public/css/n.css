@@ -1,0 +1,43 @@
+body {
+    background-color: #f8f9fa;
+}
+
+.location-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 1rem;
+}
+
+.location-item {
+    padding: 10px 15px;
+    margin: 5px;
+    background-color: #007bff;
+    color: white;
+    border-radius: 5px;
+    transition: background-color 0.3s;
+    display: flex;
+    align-items: center;
+}
+
+.location-item i {
+    margin-right: 5px;
+}
+
+.location-item:hover {
+    background-color: #0056b3;
+}
+
+.current-location-box {
+    border: 2px solid #007bff;
+    border-radius: 5px;
+}
+
+.entry-exit-box {
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+.active-location {
+    background-color: #0056b3 !important;
+}

@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Transportation System</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome for icons -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="../css/n.css">
+</head>
+<body>
+    <div class="container mt-4">
+        <!-- Top bar with total seat and total passenger -->
+        <header class="text-center mb-4">
+            <h1><i class="fas fa-bus"></i> Smart Transportation System</h1>
+            <div class="d-flex justify-content-between align-items-center my-4">
+                <div class="total-seat">
+                    <h5><i class="fas fa-chair"></i> Total Seats: <span id="total-seats">40</span></h5>
+                </div>
+                <div class="total-passenger">
+                    <h5><i class="fas fa-users"></i> Total Passengers: <span id="total-passengers">0</span></h5>
+                </div>
+            </div>
+        </header>
+
+        <!-- All locations in one row with icons -->
+        <div class="location-row mb-4">
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Mirpur 10</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Kazipara</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Shewrapara</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Taltola</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Agargaon</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Khamar Bari</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Farmgate</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Kawran Bazar</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Bangla Motor</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Shahbag</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Matsya Bhaban</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> High Court</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Paltan</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> GPO</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Gulistan</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Motijheel</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Ittefaq Moor</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Press Club</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Sayedabad</div>
+            <div class="location-item"><i class="fas fa-map-marker-alt"></i> Jatrabari</div>
+        </div>
+
+        <!-- Current Location Box -->
+        <div class="text-center mb-4">
+            <div class="current-location-box p-3 border bg-light">
+                <h5>Current Location</h5>
+                <p id="current-location" class="lead">Mirpur 10</p>
+            </div>
+        </div>
+
+        <!-- Navigation buttons (centered) -->
+        <div class="d-flex justify-content-center mb-4">
+            <button id="previous-btn" class="btn btn-primary mr-2"><i class="fas fa-arrow-left"></i> Previous</button>
+            <button id="next-btn" class="btn btn-primary"><i class="fas fa-arrow-right"></i> Next</button>
+        </div>
+
+        <!-- Passenger Entry and Exit Information -->
+        <div class="card mb-4">
+            <div class="card-header bg-dark text-white">
+                <h3><i class="fas fa-id-card"></i> Passenger Info</h3>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="entry-exit-box border p-3 mb-3">
+                            <h5 class="text-center text-success">New Passenger Entered!</h5>
+                            <div class="passenger-info-entry">
+                                <p>Card Number: <span id="enter-card-number">N/A</span></p>
+                                <p>Name: <span id="enter-passenger-name">N/A</span></p>
+                                <p>Age: <span id="enter-passenger-age">N/A</span></p>
+                                <p>Phone: <span id="enter-passenger-phone">N/A</span></p>
+                                <p>Gmail: <span id="enter-passenger-email">N/A</span></p>
+                                <p><strong>Card Balance:</strong> <span id="enter-card-balance" class="text-danger">N/A</span></p>
+                                <p>Enter Location: <span id="enter-location">N/A</span></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div class="entry-exit-box border p-3 mb-3">
+                            <h5 class="text-center text-danger">Passenger Exited!</h5>
+                            <div class="passenger-info-exit">
+                                <p>Card Number: <span id="exit-card-number">N/A</span></p>
+                                <p>Name: <span id="exit-passenger-name">N/A</span></p>
+                                <p>Age: <span id="exit-passenger-age">N/A</span></p>
+                                <p>Phone: <span id="exit-passenger-phone">N/A</span></p>
+                                <p>Gmail: <span id="exit-passenger-email">N/A</span></p>
+                                <p><strong>Card Balance:</strong> <span id="exit-card-balance" class="text-danger">N/A</span></p>
+                                <p>Exit Location: <span id="exit-location">N/A</span></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Current Passengers Table -->
+        <div class="card mb-4">
+            <div class="card-header bg-dark text-white">
+                <h3><i class="fas fa-users"></i> Current Passengers</h3>
+            </div>
+            <div class="card-body">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Card ID</th>
+                            <th>Name</th>
+                            <th>Age</th>
+                            <th>Phone</th>
+                            <th>Location Enter</th>
+                            <th>Location Exit</th>
+                            <th>Card Balance</th> <!-- New header for Card Balance -->
+                        </tr>
+                    </thead>
+                    <tbody id="passenger-table-body">
+                        <tr>
+                            <td>1234567890</td>
+                            <td>Hemla</td>
+                            <td>25</td>
+                            <td>+880123456789</td>
+                            <td>Mirpur 10</td>
+                            <td>NULL</td>
+                            <td><strong>2000 BDT</strong></td> <!-- Card Balance in bold -->
+                        </tr>
+                        <tr>
+                            <tr>
+                                <td>1234567890</td>
+                                <td>Tushar</td>
+                                <td>25</td>
+                                <td>+880123456789</td>
+                                <td>Mirpur 10</td>
+                                <td>NULL</td>
+                                <td><strong>2000 BDT</strong></td> <!-- Card Balance in bold -->
+                            </tr>
+                        </tr>
+                            <td>1234567890</td>
+                            <td>Nahid</td>
+                            <td>25</td>
+                            <td>+880123456789</td>
+                            <td>Mirpur 10</td>
+                            <td>NULL</td>
+                            <td><strong>2000 BDT</strong></td> <!-- Card Balance in bold -->
+                        </tr>
+                        <!-- Additional passengers will be dynamically added here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS and dependencies -->
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.3/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+
+    <!-- Custom JS for Next/Previous location navigation -->
+    <script>
+        const locations = [
+            'Mirpur 10', 'Kazipara', 'Shewrapara', 'Taltola', 'Agargaon', 'Khamar Bari',
+            'Farmgate', 'Kawran Bazar', 'Bangla Motor', 'Shahbag', 'Matsya Bhaban', 
+            'High Court', 'Paltan', 'GPO', 'Gulistan', 'Motijheel', 'Ittefaq Moor',
+            'Press Club', 'Sayedabad', 'Jatrabari'
+        ];
+        
+        let currentIndex = 0;
+
+        function updateLocation() {
+            document.getElementById('current-location').innerText = locations[currentIndex];
+            const locationItems = document.querySelectorAll('.location-item');
+            
+            // Remove 'active-location' class from all items
+            locationItems.forEach((item, index) => {
+                item.classList.remove('active-location');
+                if (index === currentIndex) {
+                    item.classList.add('active-location');
+                }
+            });
+        }
+
+        document.getElementById('next-btn').addEventListener('click', () => {
+            if (currentIndex < locations.length - 1) {
+                currentIndex++;
+                updateLocation();
+            }
+        });
+
+        document.getElementById('previous-btn').addEventListener('click', () => {
+            if (currentIndex > 0) {
+                currentIndex--;
+                updateLocation();
+            }
+        });
+
+        // Initial location display
+        updateLocation();
+    </script>
+</body>
+</html>
