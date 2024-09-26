@@ -1,0 +1,176 @@
+/* Custom CSS */
+body {
+    background-color: #f8f9fa;
+    font-family: 'Poppins', sans-serif;
+    color: #333;
+}
+
+h1, h2 {
+    font-weight: 700;
+    color: #0056b3;
+}
+
+.container {
+    background-color: #fff;
+    border-radius: 12px;
+    padding: 30px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+    margin-bottom: 40px;
+}
+
+.current-travel .info-item,
+.personal-info .info-item {
+    font-size: 1.1rem;
+    background-color: #f1f3f5;
+    padding: 15px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+    transition: background-color 0.3s ease;
+}
+
+.current-travel .info-item i,
+.personal-info .info-item i {
+    font-size: 1.5rem;
+    margin-right: 10px;
+    color: #0056b3;
+}
+
+.current-travel .info-item:hover,
+.personal-info .info-item:hover {
+    background-color: #e9ecef;
+}
+
+.profile-picture img {
+    width: 150px;
+    height: 150px;
+    object-fit: cover;
+    border-radius: 50%;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.profile-picture img:hover {
+    transform: scale(1.1);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+}
+
+.profile-details h2 {
+    font-size: 1.8rem;
+    margin-bottom: 10px;
+}
+
+.profile-details p {
+    font-size: 1.1rem;
+    color: #555;
+}
+
+.profile-details p i {
+    margin-right: 10px;
+    color: #0056b3;
+}
+
+.btn-primary {
+    background-color: #0056b3;
+    border-color: #0056b3;
+    padding: 10px 20px;
+    font-size: 1.1rem;
+    border-radius: 8px;
+    transition: background-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.btn-primary:hover {
+    background-color: #004494;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+}
+
+.table {
+    font-size: 1rem;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.table th,
+.table td {
+    vertical-align: middle;
+    text-align: center;
+}
+
+.table th {
+    background-color: #0056b3;
+    color: #fff;
+}
+
+.table td {
+    background-color: #f8f9fa;
+}
+
+.table-striped tbody tr:nth-of-type(odd) {
+    background-color: #e9ecef;
+}
+
+.pagination .page-item .page-link {
+    color: #0056b3;
+    font-size: 1.1rem;
+    padding: 10px 15px;
+    border-radius: 8px;
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.pagination .page-item.active .page-link {
+    background-color: #0056b3;
+    color: white;
+}
+
+.pagination .page-item:hover .page-link {
+    background-color: #e9ecef;
+}
+
+/* Custom Hover Effects */
+.info-item:hover i {
+    color: #ff6347;
+}
+
+h1 i,
+h2 i {
+    color: #0056b3;
+    margin-right: 10px;
+}
+
+h1 {
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.info-item strong {
+    font-weight: bold;
+    color: #0056b3;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .profile-details {
+        text-align: center;
+    }
+
+    .profile-details h2 {
+        font-size: 1.6rem;
+    }
+
+    .profile-details p {
+        font-size: 1rem;
+    }
+
+    .btn-primary {
+        font-size: 1rem;
+        padding: 8px 16px;
+    }
+
+    .pagination .page-item .page-link {
+        font-size: 1rem;
+        padding: 8px 12px;
+    }
+}
+
+
+
