@@ -102,14 +102,14 @@ app.get('/rfid-scan', async (req, res) => {
 
       if (!user_data) {
           req.flash('error', 'Invalid Credential');
-          url = `http://${Ip}:2000/home`;
+          url = `http://localhost:2000/home`;
       } else {
           req.session.cardID = cardID;
           req.session.user_id = user_data.USER_ID;
           const user_id = user_data.USER_ID;
           console.log('this is session user id', req.session.user_id);
           req.flash('login_success', 'successfully logged in');
-          url = `http://${Ip}:2000/user/${user_id}`;
+          url = `http://localhost:2000/user/${user_id}`;
       }
 
       exec(`start ${url}`, (err) => {
