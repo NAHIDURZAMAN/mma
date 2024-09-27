@@ -14,9 +14,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.3/gsap.min.js"></script>
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-    <!-- MDB CSS -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/mdb-ui-kit/3.10.2/mdb.min.css" />
-
     <style>
         /* Loading Screen Styles */
         #loadingScreen {
@@ -32,10 +29,11 @@
             display: none;
         }
 
-        /* Map styles */
+        /* Map Styles */
         #map {
-            height: 70vh; /* 70% of the viewport height */
+            height: 70vh;
             width: 100%;
+            margin-top: 50px;
         }
     </style>
 </head>
@@ -61,22 +59,149 @@
 
     <div class="container">
         <!-- Current Traveling Section -->
-        <!-- [Current Traveling content here] -->
+        <section class="current-travel" id="currentTravel">
+            <h2 class="text-primary">Current Traveling</h2>
+            <div class="row g-4">
+                <div class="col-md-6">
+                    <div class="info-item">
+                        <i class="fas fa-map-marker-alt text-success"></i>
+                        <span>Pick Point: <strong>Mandatory</strong></span>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="info-item">
+                        <i class="fas fa-map-signs text-success"></i>
+                        <span>Drop Point: <strong>Null</strong></span>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="info-item">
+                        <i class="fas fa-road text-warning"></i>
+                        <span>Per KM Cost: <strong>10 Taka</strong></span>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="info-item">
+                        <i class="fas fa-calculator text-warning"></i>
+                        <span>Total Cost: <strong>-- Taka</strong></span>
+                    </div>
+                </div>
+            </div>
+        </section>
 
         <!-- Profile Section -->
-        <!-- [Profile content here] -->
+        <section class="profile mt-5" id="profileSection">
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="profile-picture">
+                    <img src="https://via.placeholder.com/150" alt="Profile Picture" class="rounded-circle border border-3 border-primary">
+                </div>
+                <div class="profile-details flex-grow-1 ms-4">
+                    <h2>John Doe</h2>
+                    <p class="large-font"><i class="fas fa-id-card"></i> Card ID: <strong><%= user_data[0].CARD_ID %></strong></p>
+                    <p class="large-font"><i class="fas fa-wallet"></i> Card Balance: <strong><%= user_data[0].BALANCE %> Taka</strong></p>
+                </div>
+                <div>
+                    <button class="btn btn-primary"><i class="fas fa-edit"></i> Edit Profile</button>
+                    <button class="btn btn-success" data-bs-toggle="collapse" data-bs-target="#rechargeSection"><i class="fas fa-plus-circle"></i> Recharge</button>
+                </div>
+            </div>
+
+            <!-- Recharge Section -->
+            <div class="collapse" id="rechargeSection">
+                <h3 class="mt-4">Recharge Options</h3>
+                <div class="d-flex justify-content-center gap-3">
+                    <img src="/smart transit/public/IMage/BKash-Logo.wine.png" alt="bKash" width="200">
+                    <img src="/smart transit/public/IMage/Nagad-Logo.wine.png" alt="Nagad" width="200">
+                    <img src="/smart transit/public/IMage/Visa_Inc.-Logo.wine.png" alt="Card Banking" width="200">
+                </div>
+            </div>
+        </section>
 
         <!-- Personal Information Section -->
-        <!-- [Personal Information content here] -->
+        <section class="personal-info mt-5" id="personalInfo">
+            <h2 class="text-primary">Personal Information</h2>
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="info-item">
+                        <i class="fas fa-user text-warning"></i>
+                        <span>Name: <strong><%= user_data[0].NAME %></strong></span>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="info-item">
+                        <i class="fas fa-calendar-alt text-warning"></i>
+                        <span>Age: <strong><%= user_data[0].AGE %></strong></span>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="info-item">
+                        <i class="fas fa-envelope text-warning"></i>
+                        <span>Email: <strong><%= user_data[0].EMAIL %></strong></span>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="info-item">
+                        <i class="fas fa-phone text-warning"></i>
+                        <span>Phone Number: <strong><%= user_data[0].PHONE %></strong></span>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="info-item">
+                        <i class="fas fa-home text-warning"></i>
+                        <span>Address: <strong><%= user_data[0].ADDRESS %></strong></span>
+                    </div>
+                </div>
+            </div>
+        </section>
 
         <!-- History Section with Pagination -->
-        <!-- [History content here] -->
+        <section class="history mt-5" id="historySection">
+            <h2 class="text-primary">Travel History</h2>
+            <table class="table table-striped table-bordered mt-3">
+                <thead class="table-primary">
+                    <tr>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Pick Point</th>
+                        <th>Drop Point</th>
+                        <th>Total Cost</th>
+                        <th>Remaining Balance</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>2024-09-26</td>
+                        <td>10:30 AM</td>
+                        <td>Station A</td>
+                        <td>Station B</td>
+                        <td>150 Taka</td>
+                        <td>350 Taka</td>
+                    </tr>
+                    <!-- Add more rows as needed -->
+                </tbody>
+            </table>
 
-        <!-- Map Section for Current Location and Distance -->
-        <section class="map-section mt-5" id="mapSection">
-            <h2 class="text-primary text-center mb-4">Current Location and Address Display</h2>
-            <div id="map" class="mb-4"></div>
-            <div class="text-center">
+            <!-- Pagination -->
+            <nav aria-label="Page navigation example">
+                <ul class="pagination justify-content-center">
+                    <li class="page-item disabled">
+                        <a class="page-link" href="#" tabindex="-1">Previous</a>
+                    </li>
+                    <li class="page-item"><a class="page-link" href="#">1</a></li>
+                    <li class="page-item"><a class="page-link" href="#">2</a></li>
+                    <li class="page-item"><a class="page-link" href="#">3</a></li>
+                    <li class="page-item">
+                        <a class="page-link" href="#">Next</a>
+                    </li>
+                </ul>
+            </nav>
+        </section>
+
+        <!-- Map Section -->
+        <section class="map-section mt-5">
+            <h2 class="text-primary text-center">Current Location and Address Display</h2>
+            <div id="map"></div>
+            <div class="text-center mt-3">
                 <div id="savedLocation" class="mb-3"></div>
                 <p id="distance"></p>
             </div>
@@ -86,100 +211,53 @@
     <!-- Bootstrap JS and dependencies -->
     <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.3/dist/umd/popper.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.min.js"></script>
+
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-    <!-- Axios JS -->
-    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-    <!-- MDB JS -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/mdb-ui-kit/3.10.2/mdb.min.js"></script>
-
-    <!-- GSAP Animation Script -->
     <script>
-        // Remove loading screen after the page loads
-        window.addEventListener('load', function() {
-            document.body.classList.add('loaded');
-            gsap.from('#header', { duration: 1, opacity: 0, y: -50, ease: 'power2.out' });
-            gsap.from('#currentTravel', { duration: 1, opacity: 0, x: -100, ease: 'power2.out', delay: 0.5 });
-            gsap.from('#profileSection', { duration: 1, opacity: 0, y: 100, ease: 'power2.out', delay: 1 });
-            gsap.from('#personalInfo', { duration: 1, opacity: 0, x: 100, ease: 'power2.out', delay: 1.5 });
-            gsap.from('#historySection', { duration: 1, opacity: 0, y: 100, ease: 'power2.out', delay: 2 });
-            gsap.from('#mapSection', { duration: 1, opacity: 0, y: 100, ease: 'power2.out', delay: 2.5 });
-        });
+        // Map setup and current location functionality
+        var map = L.map('map').setView([51.505, -0.09], 13); // Default center view
 
-        // Initialize the map
-        const map = L.map('map').setView([0, 0], 13);
-        const getdata = async (lat, lng, pick_point) => {
-            try {
-                const res = await axios.get(`/user/<%= get_id %>?request=json&let=${lat}&lang=${lng}&pick_point=${pick_point}`);
-                console.log(res.data);
-            } catch (error) {
-                console.log('error', error);
-            }
-        }
-
-        // Add OpenStreetMap tiles
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
 
-        // Target location coordinates
-        const targetLat = 23.822941;
-        const targetLng = 90.392630;
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(function(position) {
+                var lat = position.coords.latitude;
+                var lon = position.coords.longitude;
 
-        // Function to calculate the distance between two points using Haversine formula
-        function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371; // Radius of the Earth in kilometers
-            const dLat = (lat2 - lat1) * Math.PI / 180;
-            const dLon = (lon2 - lon1) * Math.PI / 180;
-            const a = 
-                0.5 - Math.cos(dLat)/2 + 
-                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-                (1 - Math.cos(dLon))/2;
+                var marker = L.marker([lat, lon]).addTo(map)
+                    .bindPopup("You are here")
+                    .openPopup();
 
-            return R * 2 * Math.asin(Math.sqrt(a));
+                map.setView([lat, lon], 13);
+
+                fetch(`https://api.geoapify.com/v1/geocode/reverse?lat=${lat}&lon=${lon}&apiKey=YOUR_GEOAPIFY_API_KEY`)
+                    .then(response => response.json())
+                    .then(data => {
+                        const address = data.features[0].properties.formatted;
+                        document.getElementById('savedLocation').innerHTML = `<strong>Address: ${address}</strong>`;
+                    });
+
+            }, function(error) {
+                console.error("Error occurred. Error code: " + error.code);
+            });
         }
-
-        // Function to show current location and address
-        function showCurrentLocation() {
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(async function (position) {
-                    const lat = position.coords.latitude;
-                    const lng = position.coords.longitude;
-
-                    // Display the current location on the map
-                    const marker = L.marker([lat, lng]).addTo(map);
-                    map.setView([lat, lng], 13);
-
-                    // Reverse Geocoding to get the address
-                    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`);
-                    const data = await response.json();
-
-                    // Display the current address
-                    const address = data.display_name || `Latitude: ${lat}, Longitude: ${lng}`;
-                    document.getElementById('savedLocation').innerText = `Current Address: ${address}`;
-
-                    // Send location and address to the server
-                    getdata(lat, lng, address);
-
-                    // Check if target location is available and calculate the distance
-                    if (lat && lng) {
-                        const distance = calculateDistance(lat, lng, targetLat, targetLng);
-                        document.getElementById('distance').innerText = `Distance to target: ${distance.toFixed(2)} km`;
-                    }
-
-                    // GSAP animation for smooth appearance
-                    gsap.from("#savedLocation", { duration: 1, opacity: 0, y: -50 });
-                    gsap.from("#distance", { duration: 1, opacity: 0, y: -50 });
-
-                });
-            } else {
-                alert("Geolocation is not supported by this browser.");
-            }
-        }
-
-        // Call the function to show current location
-        showCurrentLocation();
     </script>
 
+    <!-- GSAP Animation for loading screen -->
+    <script>
+        window.addEventListener('load', function() {
+            document.body.classList.add('loaded');
+        });
+
+        gsap.from("#header", { duration: 1, y: -100, opacity: 0 });
+        gsap.from("#currentTravel", { duration: 1, x: -100, opacity: 0, delay: 0.5 });
+        gsap.from("#profileSection", { duration: 1, x: 100, opacity: 0, delay: 1 });
+        gsap.from("#personalInfo", { duration: 1, y: 100, opacity: 0, delay: 1.5 });
+        gsap.from("#historySection", { duration: 1, x: -100, opacity: 0, delay: 2 });
+        gsap.from("#map", { duration: 1, scale: 0, opacity: 0, delay: 2.5 });
+    </script>
 </body>
 </html>
