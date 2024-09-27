@@ -12,12 +12,14 @@ const requirecard = (req, res, next) => {
 const requireloginuser = (req, res, next) => {
   console.log(req.session.user_id);
   const user_id = req.session.user_id;
-  if (!user_id || user_id[0] !== 'U') {
+  const card_id = req.session.cardID;
+
+  if (!user_id || user_id[0] !== 'U'|| !card_id) {
     req.session.returnTo = req.originalUrl; // Store the original URL
     req.flash('requireLOGIN', 'Please login first');
     return res.redirect('/home/login');
-  }
-  next();
+  }
+  next();
 };
 
 const requireloginadmin = (req, res, next) => {

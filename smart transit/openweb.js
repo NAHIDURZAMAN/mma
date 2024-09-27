@@ -74,88 +74,67 @@ app.get('/home', (req, res) => {
   res.render('home');
 });
 ///////////////rfid scan/////////////////////
-app.get('/rfid-scan', async(req, res) => {
+
+app.get('/rfid-scan', async (req, res) => {
   console.log(req.query);
-  const cardID = req.body.cardID;
+  const cardID = req.query.cardID; // Ensure that you're passing the cardID correctly via the query parameters
+
   let connection;
-  try{
+  try {
       connection = await OracleDB.getConnection(dbConfig);
       const result = await connection.execute(
-          `SELECT * FROM USER_PROFILE WHERE  CARD_ID = :cardID`,
-          [cardID]
+          `SELECT * FROM USER_PROFILE WHERE CARD_ID = :cardID`, // Use template literal for the query
+          { cardID }
       );
       const user_data = result.rows[0];
-      
-       
-      
-       
-       
-        console.log(result.rows);
-      
-       
-          // Get the Wi-Fi IP dynamically
-  const Ip = getWirelessIPAddress();
-  if (!Ip) {
-    console.error('Could not determine the local Wi-Fi IP address.');
-    res.status(500).send('Error determining local Wi-Fi IP');
-    return;
-  }
 
-  // Log the Wi-Fi IP to the console
-  console.log(`Local Wi-Fi IP Address: ${Ip}`);
-  let url;
+      console.log(result.rows);
 
-  // Dynamically construct the URL based on the Wi-Fi IP
-  if(user_data.length === 0)
-  {
-    req.flash('error', 'Invalid Credential');
-     url = `http://${Ip}:2000/home`; 
-  }
-  else{
-    req.session.cardID = cardID;
-    req.session.user_id = user_data.USER_ID;
-    const user_id=user_data.USER_ID;
-    console.log(req.session.user_id);
-    req.flash('login_success', 'successfully logged in');
-     url = `http://${Ip}:2000/user_id/${user_id}`;
-  }
+      // Get the Wi-Fi IP dynamically
+      const Ip = getWirelessIPAddress();
+      if (!Ip) {
+          console.error('Could not determine the local Wi-Fi IP address.');
+          return res.status(500).send('Error determining local Wi-Fi IP');
+      }
 
+      console.log(`Local Wi-Fi IP Address: ${Ip}`); // Use template literals
+      let url;
 
- // You can modify the port or path as needed
+      if (!user_data) {
+          req.flash('error', 'Invalid Credential');
+          url = `http://${Ip}:2000/home`; // Use template literals
+      } else {
+          req.session.cardID = cardID;
+          req.session.user_id = user_data.USER_ID;
+          const user_id = user_data.USER_ID;
+          console.log('This is session user id:', req.session.user_id);
+          req.flash('login_success', 'Successfully logged in');
+          url = `http://${Ip}:2000/user/${user_id}`; // Use template literals
+      }
 
-  // Use exec to open the URL in the default browser (Windows example)
-  exec(`start ${url}`, (err, stdout, stderr) => {
-    if (err) {
-      console.error(`Error opening URL: ${stderr}`);
-      res.status(500).send('Error opening the website');
-    } else {
-      console.log(`Website opened: ${url}`);
-      res.redirect(`${url}`);
-    }
-  });
-
-
-      
-     
-   
-  }
-  catch (err) {
-      console.error(err);
+      exec(`start ${url}`, (err) => { // Use template literals
+          if (err) {
+              console.error(`Error opening URL: ${err}`); // Improved error message
+              return res.status(500).send('Error opening the website');
+          } else {
+              console.log(`Website opened: ${url}`); // Use template literals
+              res.redirect(url); // Use template literals
+          }
+      });
+  } catch (err) {
+      console.error('Error in RFID scan:', err); // Enhanced error logging
       res.status(500).send('Error getting user profile');
   } finally {
       if (connection) {
           try {
               await connection.close();
           } catch (err) {
-              console.error(err);
+              console.error('Error closing connection:', err); // Enhanced error logging
           }
       }
   }
-
-
-
-
 });
+
 
 
 /////////////////////////login////////////////////////
