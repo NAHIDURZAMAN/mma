@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Metro Rail Login</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet" />
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700&display=swap" rel="stylesheet" />
+    <!-- MDB -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/mdb-ui-kit/7.3.2/mdb.min.css" rel="stylesheet" />
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mdb-ui-kit/6.2.0/mdb.min.js"></script>
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mdb-ui-kit/7.3.2/mdb.umd.min.js"></script>    
+    <style>
+        body {
+            background: linear-gradient(to right, #6a11cb, #2575fc);
+            color: #ffffff;
+            font-family: 'Arial', sans-serif;
+            display: flex; /* Use flexbox for centering */
+            align-items: center; /* Center vertically */
+            justify-content: center; /* Center horizontally */
+            height: 100vh; /* Full viewport height */
+            margin: 0; /* Remove default margin */
+            overflow: hidden; /* Prevent scrolling during loading */
+        }
+
+        .loading-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            background-color: rgba(255, 255, 255, 0.9);
+            z-index: 1000;
+        }
+
+        .loading-image {
+            max-width: 300px; /* Adjust as needed */
+            margin-bottom: 20px; /* Space between image and spinner */
+        }
+
+        .footer {
+            position: fixed;
+            bottom: 10px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            color: #ffffff;
+        }
+
+        .login-card {
+            width: 400px; /* Set a width for the card */
+        }
+    </style>
+</head>
+<body>
+    <%- include('flash/loginflash.ejs') %>
+    <!-- Loading Screen -->
+    <div id="loading" class="loading-screen">
+        <img src="path/to/your/loading-image.jpg" alt="Loading..." class="loading-image">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+
+    <!-- Login Form -->
+    <div class="login-card">
+        <div class="card">
+            <div class="card-body">
+                <h4 class="card-title text-center">Metro Rail Login</h4>
+                <form id="loginForm" novalidate action="/home/login" method="post"> <!-- Added novalidate for custom validation -->
+                    <div class="mb-3">
+                        <label for="cardId" class="form-label">User ID or Card Number</label>
+                        <input type="text" class="form-control" id="cardId" name="user_id" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Password</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                    </div>
+                    <div class="text-center">
+                        <button type="submit" class="btn btn-primary">Login</button>
+                    </div>
+                    <div class="text-center mt-3">
+                        <a href="#">Forgot your Password?</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>&copy; 2024 Metro Rail. All rights reserved.</p>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.4/gsap.min.js"></script>
+    <script>
+ document.addEventListener("DOMContentLoaded", function() {
+    // Simulate loading
+    setTimeout(() => {
+        document.getElementById("loading").style.display = "none";
+        const card = document.querySelector(".card");
+        card.classList.add("show");
+        gsap.fromTo(card, { opacity: 0, y: -50 }, { opacity: 1, y: 0, duration: 1 });
+    }, 2000);
+
+    // Form submission animation
+    document.getElementById("loginForm").addEventListener("submit", function(event) {
+        // Prevent the default form submission if it's invalid
+        if (!this.checkValidity()) {
+            event.preventDefault();
+            
+            // Trigger the validation messages for MDB
+            Array.from(this.elements).forEach(element => {
+                if (!element.checkValidity()) {
+                    element.classList.add('is-invalid');
+                } else {
+                    element.classList.remove('is-invalid');
+                }
+            });
+
+            this.classList.add('was-validated'); // Add was-validated class for MDB validation
+        }
+    });
+});
+    </script>
+</body>
+</html>

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Leaflet Map with Current Location and Address Display</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/mdb-ui-kit/3.10.2/mdb.min.css" />
+  <style>
+    body, html {
+      height: 100%;
+      margin: 0;
+    }
+    #map {
+      height: 70vh; /* 70% of the viewport height */
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container mt-5">
+    <h2 class="text-center mb-4">Current Location and Address Display</h2>
+    <div id="map" class="mb-4"></div>
+    <div class="text-center">
+      
+      <div id="savedLocation" class="mb-3"></div>
+      <p id="distance"></p>
+    </div>
+  </div>
+  
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mdb-ui-kit/3.10.2/mdb.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.9.1/gsap.min.js"></script>
+  <script>
+    // Initialize the map
+    const map = L.map('map').setView([0, 0], 13);
+    const getdata = async (lat, lng,pick_point) => {
+      try {
+        const res = await axios.get(`/user/<%= get_id %>?request=json&let=${lat}&lang=${lng}&pick_point=${pick_point}`);
+        console.log(res.data);
+      } catch (error) {
+        console.log('error', error);
+      }
+    }
+
+    // Add OpenStreetMap tiles
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+    }).addTo(map);
+
+    // Target location coordinates
+    const targetLat = 23.822941;
+    const targetLng = 90.392630;
+
+    // Function to calculate the distance between two points using Haversine formula
+    function calculateDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371; // Radius of the Earth in kilometers
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = 
+        0.5 - Math.cos(dLat)/2 + 
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+        (1 - Math.cos(dLon))/2;
+
+      return R * 2 * Math.asin(Math.sqrt(a));
+    }
+
+    // Function to show current location and address
+    function showCurrentLocation() {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(async function (position) {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+
+          // Display the current location on the map
+          const marker = L.marker([lat, lng]).addTo(map);
+          map.setView([lat, lng], 13);
+
+          // Reverse Geocoding to get the address
+          const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`);
+          const data = await response.json();
+
+          // Display the current address
+          const address = data.display_name || `Latitude: ${lat}, Longitude: ${lng}`;
+          document.getElementById('savedLocation').innerText = `Current Address: ${address}`;
+
+          // Send location and address to the server
+          getdata(lat, lng,address);
+
+          // Check if target location is available and calculate the distance
+          if (lat && lng) {
+            const distance = calculateDistance(lat, lng, targetLat, targetLng);
+            document.getElementById('distance').innerText = `Distance to target: ${distance.toFixed(2)} km`;
+          }
+
+          // GSAP animation for smooth appearance
+          gsap.from("#savedLocation", { duration: 1, opacity: 0, y: -50 });
+          gsap.from("#distance", { duration: 1, opacity: 0, y: -50 });
+
+        });
+      } else {
+        alert("Geolocation is not supported by this browser.");
+      }
+    }
+
+    // Call the function to show current location
+    showCurrentLocation();
+  </script>
+
+</body>
+</html>
