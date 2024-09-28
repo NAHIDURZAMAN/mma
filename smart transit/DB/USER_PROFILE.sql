@@ -65,3 +65,5 @@ VALUES ('Chris Johnson', 'chris.johnson@example.com', '+1122334460', '520028E289
 -- Insert 5th User with unique data
 INSERT INTO USER_PROFILE (NAME, EMAIL, PHONE, CARD_ID, BALANCE, DOB, ADDRESS, PASSWORD)
 VALUES ('Alex Johnson', 'alex.johnson@example.com', '+1122334470', '4400309616', 750, TO_TIMESTAMP('1997-03-05 10:15:00', 'YYYY-MM-DD HH24:MI:SS'), '789 Boulevard, City, Country', 'hashed_password');
+
+UPDATE USER_PROFILE SET BALANCE=30 WHERE USER_ID='U000010';

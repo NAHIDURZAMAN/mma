@@ -37,14 +37,19 @@ const sessionConfig = {
 };
 app.use(session(sessionConfig));
 app.use(flash());
-app.use('/user', user);
+
+// Move this middleware before the routes
 app.use((req, res, next) => {
   res.locals.login_success = req.flash('login_success');
   res.locals.error = req.flash('error');
-  res.locals.id =  req.session.user_id;
+  res.locals.capacityerror = req.flash('capacityerror'); // Ensure this is defined here
+  res.locals.id = req.session.user_id;
+  res.locals.secret = req.session.secret;
+
   console.log('the user from res', req.session.user_id);
   next();
 });
+app.use('/user', user);
 
 // Function to get the local Wi-Fi IP address
 function getWirelessIPAddress() {
@@ -105,6 +110,7 @@ app.get('/rfid-scan', async (req, res) => {
           url = `http://localhost:2000/home`;
       } else {
           req.session.cardID = cardID;
+          req.session.secret = '123';
           req.session.user_id = user_data.USER_ID;
           const user_id = user_data.USER_ID;
           console.log('this is session user id', req.session.user_id);
@@ -159,7 +165,7 @@ app.post('/home/login', async (req, res) => {
       res.redirect('/home/login');
     } else {
       req.session.user_id = user_data.USER_ID;
-      req.session.cardID = user_data.CARD_ID;
+      // req.session.cardID = user_data.CARD_ID;
       console.log(req.session.user_id);
       res.redirect(`/user/${user_data.USER_ID}`);
     }
