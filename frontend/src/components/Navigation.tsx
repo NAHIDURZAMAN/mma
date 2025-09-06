@@ -17,7 +17,7 @@ const navigation = [
   { name: 'Users', href: '/users', icon: Users },
   { name: 'Monitor', href: '/monitor', icon: Activity },
   { name: 'RFID Simulator', href: '/simulator', icon: CreditCard },
-  { name: 'Transport Sim', href: '/transport-sim', icon: NavigationIcon },
+  { name: 'Smart Transit', href: '/smart-transit', icon: NavigationIcon },
 ];
 
 export function Navigation() {
