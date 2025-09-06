@@ -22,12 +22,15 @@ import {
   RotateCcw
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
+import PassengerManagement from '@/components/PassengerManagement';
+import RfidScanner from '@/components/RfidScanner';
+import { io } from 'socket.io-client';
 
 // Dynamically import the map component to avoid SSR issues
 const InteractiveMap = dynamic(() => import('./interactiveMap'), {
   ssr: false,
   loading: () => (
-    <div className="w-full h-[500px] bg-gradient-to-br from-blue-50 to-indigo-100 rounded-lg flex items-center justify-center">
+    <div className="w-full h-[600px] bg-gradient-to-br from-blue-50 to-indigo-100 rounded-lg flex items-center justify-center">
       <div className="text-center">
         <div className="animate-spin text-4xl mb-4">🗺️</div>
         <p className="text-gray-600">Loading interactive map...</p>
@@ -90,6 +93,7 @@ interface SimulationState {
   completedDestinations: number[];
   isWaitingAtStation: boolean;
   currentRouteProgress: number;
+  optimizedDestinations: Destination[];
 }
 
 export default function SmartTransitSimulation() {
@@ -99,6 +103,7 @@ export default function SmartTransitSimulation() {
     vehicleType: 'bus',
     currentDestinationIndex: 0,
     progress: 0,
+    currentRouteProgress: 0,
     passengers: 0,
     totalDistance: 0,
     elapsedTime: 0,
@@ -106,16 +111,17 @@ export default function SmartTransitSimulation() {
     efficiency: 0,
     completedDestinations: [],
     isWaitingAtStation: false,
-    currentRouteProgress: 0
+    optimizedDestinations: []
   });
 
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
   const [destinations, setDestinations] = useState<Destination[]>([]);
-  const [optimizedDestinations, setOptimizedDestinations] = useState<Destination[]>([]);
   const [currentRoute, setCurrentRoute] = useState<any>(null);
   const [isLoadingRoute, setIsLoadingRoute] = useState(false);
   const [routeData, setRouteData] = useState<any>(null);
   const [currentPosition, setCurrentPosition] = useState<[number, number] | null>(null);
+  const [isRfidConnected, setIsRfidConnected] = useState(false);
+  const [lastRfidScan, setLastRfidScan] = useState<any>(null);
 
   const [stats, setStats] = useState({
     totalTrips: 127,
@@ -125,6 +131,7 @@ export default function SmartTransitSimulation() {
   });
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   const [realTimeData, setRealTimeData] = useState({
     currentPosition: { lat: 23.7368, lng: 90.3951 },
     heading: 0,
@@ -154,6 +161,93 @@ export default function SmartTransitSimulation() {
           setCurrentPosition(fallbackPos);
         }
       );
+    }
+  }, []);
+
+  // Setup WebSocket connection for RFID scanning
+  useEffect(() => {
+    const connectWebSocket = () => {
+      try {
+        // Connect to Socket.IO server instead of raw WebSocket
+        const socket = io('http://localhost:2000');
+        
+        socket.on('connect', () => {
+          console.log('Connected to RFID Socket.IO server');
+          setIsRfidConnected(true);
+          wsRef.current = socket as any;
+        });
+
+        socket.on('rfid_scan', (data: any) => {
+          console.log('RFID scan received via Socket.IO:', data);
+          handleRfidScan(data);
+        });
+
+        socket.on('disconnect', () => {
+          console.log('Disconnected from RFID Socket.IO server');
+          setIsRfidConnected(false);
+        });
+
+        socket.on('connect_error', (error: any) => {
+          console.error('Socket.IO connection error:', error);
+          setIsRfidConnected(false);
+        });
+
+      } catch (error) {
+        console.error('Failed to create Socket.IO connection:', error);
+      }
+    };
+
+    connectWebSocket();
+
+    return () => {
+      if (wsRef.current && (wsRef.current as any).disconnect) {
+        (wsRef.current as any).disconnect();
+      }
+    };
+  }, []);
+
+  // Send vehicle position updates via Socket.IO
+  useEffect(() => {
+    if (wsRef.current && (wsRef.current as any).emit && currentPosition) {
+      (wsRef.current as any).emit('vehicle_position_update', {
+        lat: currentPosition[0],
+        lng: currentPosition[1],
+        address: `Vehicle Location: ${currentPosition[0].toFixed(6)}, ${currentPosition[1].toFixed(6)}`,
+        busId: 'BUS001',
+        timestamp: new Date().toISOString()
+      });
+    }
+  }, [currentPosition]);
+
+  // Handle RFID card scan
+  const handleRfidScan = useCallback((scanData: any) => {
+    console.log('RFID scan received:', scanData);
+    setLastRfidScan(scanData);
+
+    // Update user location to the bus/RFID scanner location
+    if (scanData.busLocation) {
+      const newLocation: [number, number] = [scanData.busLocation.lat, scanData.busLocation.lng];
+      setUserLocation(newLocation);
+      setCurrentPosition(newLocation);
+      setRealTimeData(prev => ({
+        ...prev,
+        currentPosition: { lat: newLocation[0], lng: newLocation[1] }
+      }));
+      
+      console.log('Updated user location from RFID scan:', newLocation);
+    }
+
+    // Update passenger count if someone boarded
+    if (scanData.action === 'board') {
+      setSimulation(prev => ({
+        ...prev,
+        passengers: prev.passengers + 1
+      }));
+    } else if (scanData.action === 'exit') {
+      setSimulation(prev => ({
+        ...prev,
+        passengers: Math.max(0, prev.passengers - 1)
+      }));
     }
   }, []);
 
@@ -244,14 +338,14 @@ export default function SmartTransitSimulation() {
 
   // Continue to next station
   const continueToNextStation = useCallback(async () => {
-    if (!currentPosition || simulation.currentDestinationIndex >= optimizedDestinations.length - 1) {
+    if (!currentPosition || simulation.currentDestinationIndex >= simulation.optimizedDestinations.length - 1) {
       // Journey complete
       stopSimulation();
       return;
     }
 
     const nextDestIndex = simulation.currentDestinationIndex + 1;
-    const nextDestination = optimizedDestinations[nextDestIndex];
+    const nextDestination = simulation.optimizedDestinations[nextDestIndex];
     
     if (!nextDestination) {
       stopSimulation();
@@ -273,7 +367,7 @@ export default function SmartTransitSimulation() {
 
     // Start animation to next destination
     startSingleDestinationJourney();
-  }, [currentPosition, simulation.currentDestinationIndex, optimizedDestinations]);
+  }, [currentPosition, simulation.currentDestinationIndex, simulation.optimizedDestinations]);
 
   // Start journey to a single destination
   const startSingleDestinationJourney = useCallback(() => {
@@ -383,7 +477,11 @@ export default function SmartTransitSimulation() {
       }
     }
 
-    setOptimizedDestinations(optimized);
+    // Update simulation state with optimized destinations
+    setSimulation(prev => ({
+      ...prev,
+      optimizedDestinations: optimized
+    }));
 
     // Get route to first destination
     const firstDestination = optimized[0];
@@ -438,7 +536,54 @@ export default function SmartTransitSimulation() {
       isWaitingAtStation: false
     }));
     setCurrentPosition(userLocation);
-    setOptimizedDestinations([]);
+    setSimulation(prev => ({
+      ...prev,
+      optimizedDestinations: []
+    }));
+  };
+
+  // Reset travel database
+  const resetTravelDatabase = async () => {
+    const confirmed = window.confirm(
+      'Are you sure you want to reset ALL travel data? This will clear:\n\n' +
+      '• ALL current passengers (will be removed from bus)\n' +
+      '• Travel history\n' +
+      '• Recent RFID scans\n' +
+      '• Vehicle position (reset to terminal)\n\n' +
+      'This will completely clear the system!\n' +
+      'This action cannot be undone!'
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const response = await fetch('http://localhost:2000/api/admin/reset-travel-data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        alert('✅ All travel data reset successfully! System is completely clear.');
+        
+        // Reset local simulation state
+        stopSimulation();
+        setDestinations([]);
+        
+        // Refresh passenger data
+        if (window.location.pathname.includes('smart-transit')) {
+          window.location.reload();
+        }
+      } else {
+        alert('❌ Failed to reset travel database: ' + result.message);
+      }
+    } catch (error) {
+      console.error('Error resetting travel database:', error);
+      alert('❌ Error resetting travel database. Please try again.');
+    }
   };
 
   // Change vehicle type
@@ -609,7 +754,7 @@ export default function SmartTransitSimulation() {
                 ) : (
                   <>
                     <div className="max-h-48 overflow-y-auto space-y-2">
-                      {(simulation.isRunning ? optimizedDestinations : destinations).map((dest, index) => {
+                      {(simulation.isRunning ? simulation.optimizedDestinations : destinations).map((dest: Destination, index: number) => {
                         const actualIndex = simulation.isRunning ? index : destinations.findIndex(d => d.lat === dest.lat && d.lng === dest.lng);
                         const isCompleted = simulation.completedDestinations.includes(index);
                         const isCurrent = simulation.currentDestinationIndex === index && simulation.isRunning;
@@ -734,6 +879,21 @@ export default function SmartTransitSimulation() {
                   </Button>
                 </div>
 
+                {/* Reset Database Button */}
+                <div className="pt-2 border-t border-gray-200">
+                  <Button 
+                    onClick={resetTravelDatabase}
+                    variant="outline"
+                    className="w-full border-2 border-red-500 text-red-600 hover:bg-red-50 font-medium"
+                  >
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Reset ALL Travel Data
+                  </Button>
+                  <p className="text-xs text-gray-500 mt-1 text-center">
+                    ⚠️ Clear everything including current passengers
+                  </p>
+                </div>
+
                 {/* Location Status */}
                 {!userLocation && (
                   <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
@@ -778,7 +938,7 @@ export default function SmartTransitSimulation() {
                     <div className="text-xs text-gray-500 text-center">
                       {simulation.isWaitingAtStation 
                         ? `Station ${simulation.currentDestinationIndex + 1} - Waiting for approval`
-                        : `To Station ${simulation.currentDestinationIndex + 1} of ${optimizedDestinations.length || destinations.length}`
+                        : `To Station ${simulation.currentDestinationIndex + 1} of ${simulation.optimizedDestinations.length || destinations.length}`
                       }
                     </div>
                   </div>
@@ -800,8 +960,8 @@ export default function SmartTransitSimulation() {
                     <div>
                       <p className="text-indigo-100 text-sm">Current Destination</p>
                       <p className="font-semibold">
-                        {(simulation.isRunning ? optimizedDestinations : destinations)[simulation.currentDestinationIndex]?.name || 
-                         (simulation.isRunning ? optimizedDestinations : destinations)[simulation.currentDestinationIndex]?.address || 
+                        {(simulation.isRunning ? simulation.optimizedDestinations : destinations)[simulation.currentDestinationIndex]?.name || 
+                         (simulation.isRunning ? simulation.optimizedDestinations : destinations)[simulation.currentDestinationIndex]?.address || 
                          'Destination ' + (simulation.currentDestinationIndex + 1)}
                       </p>
                     </div>
@@ -827,7 +987,7 @@ export default function SmartTransitSimulation() {
                     </div>
                     <div>
                       <p className="text-indigo-100 text-sm">Completed</p>
-                      <p className="font-semibold">{simulation.completedDestinations.length} of {simulation.isRunning ? optimizedDestinations.length : destinations.length}</p>
+                      <p className="font-semibold">{simulation.completedDestinations.length} of {simulation.isRunning ? simulation.optimizedDestinations.length : destinations.length}</p>
                     </div>
                     <div>
                       <p className="text-indigo-100 text-sm">Remaining</p>
@@ -846,6 +1006,14 @@ export default function SmartTransitSimulation() {
                 </CardContent>
               </Card>
             )}
+
+            {/* RFID Scanner */}
+            <RfidScanner 
+              onLocationUpdate={(location) => {
+                setUserLocation(location);
+                setCurrentPosition(location);
+              }}
+            />
           </div>
 
           {/* Map and Visualization */}
@@ -866,7 +1034,7 @@ export default function SmartTransitSimulation() {
               <CardContent>
                 <InteractiveMap
                   userLocation={userLocation}
-                  destinations={simulation.isRunning ? optimizedDestinations : destinations}
+                  destinations={simulation.isRunning ? simulation.optimizedDestinations : destinations}
                   currentPosition={currentPosition}
                   vehicleType={simulation.vehicleType}
                   isSimulationRunning={simulation.isRunning}
@@ -881,6 +1049,11 @@ export default function SmartTransitSimulation() {
               </CardContent>
             </Card>
           </div>
+        </div>
+
+        {/* Passenger Management Section */}
+        <div className="mt-8">
+          <PassengerManagement isSimulationRunning={simulation.isRunning} />
         </div>
       </div>
     </div>
