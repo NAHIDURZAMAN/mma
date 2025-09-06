@@ -7,7 +7,8 @@ import {
   Users, 
   Activity, 
   Settings,
-  CreditCard
+  CreditCard,
+  Navigation as NavigationIcon
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -16,6 +17,7 @@ const navigation = [
   { name: 'Users', href: '/users', icon: Users },
   { name: 'Monitor', href: '/monitor', icon: Activity },
   { name: 'RFID Simulator', href: '/simulator', icon: CreditCard },
+  { name: 'Transport Sim', href: '/transport-sim', icon: NavigationIcon },
 ];
 
 export function Navigation() {

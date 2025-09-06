@@ -97,6 +97,34 @@ class ApiService {
   async getArduinoConfig() {
     return this.request<any>("/api/arduino/config");
   }
+
+  // Simulation operations
+  async createTravelSimulation(data: {
+    cardId: string;
+    userName: string;
+    startLocation: string;
+    endLocation?: string;
+    estimatedFare: number;
+  }) {
+    return this.request<any>("/api/simulation/travel", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateTravelLocation(simulationId: string, location: { lat: number; lng: number }) {
+    return this.request<any>(`/api/simulation/travel/${simulationId}/location`, {
+      method: "PATCH", 
+      body: JSON.stringify(location),
+    });
+  }
+
+  async completeTravelSimulation(simulationId: string, finalFare: number) {
+    return this.request<any>(`/api/simulation/travel/${simulationId}/complete`, {
+      method: "POST",
+      body: JSON.stringify({ finalFare }),
+    });
+  }
 }
 
 export const apiService = new ApiService();
