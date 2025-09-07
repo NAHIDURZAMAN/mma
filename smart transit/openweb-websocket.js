@@ -14,6 +14,8 @@ import flash from 'connect-flash'
 import cors from 'cors'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
+import { sendJourneyCompleteEmail, sendLowBalanceAlert } from './Routes/emailService.js'
+import { forwardGeocode, reverseGeocode, calculateDistance, formatJourneyTime } from './Routes/geocodingService.js'
 
 // Load environment variables
 dotenv.config()
@@ -40,9 +42,70 @@ const ARDUINO_WIFI = {
   password: '12345678'
 }
 
+// Store current bus location (this would come from GPS in real system)
+  // Store current vehicle position
+  let currentVehiclePosition = {
+    lat: 23.8103,
+    lng: 90.4125
+  }
+  
+  console.log(`⚠️  SYSTEM STARTUP: Vehicle GPS initialized with DEFAULT coordinates: ${currentVehiclePosition.lat}, ${currentVehiclePosition.lng}`)
+  console.log(`   📡 Waiting for actual GPS updates from frontend or RFID scan requests...`)
+  
+  // Store current bus location for WebSocket updates
+  let currentBusLocation = {
+    lat: 23.8103,
+    lng: 90.4125,
+    address: 'Default Location',
+    busId: 'BUS001',
+    timestamp: new Date().toISOString()
+  }
+  
+  // Update current vehicle position from frontend
+  function updateVehiclePosition(position, source = 'UNKNOWN') {
+    const oldPosition = { ...currentVehiclePosition }
+    const DEFAULT_LAT = 23.8103
+    const DEFAULT_LNG = 90.4125
+    
+    // Prevent overwriting real coordinates with default coordinates
+    const isNewDefault = (position.lat === DEFAULT_LAT && position.lng === DEFAULT_LNG)
+    const hasRealCoords = !(oldPosition.lat === DEFAULT_LAT && oldPosition.lng === DEFAULT_LNG)
+    
+    if (isNewDefault && hasRealCoords) {
+      console.log(`🚫 Preventing GPS update: Won't overwrite real coordinates (${oldPosition.lat}, ${oldPosition.lng}) with default coordinates`)
+      return // Don't update
+    }
+    
+    currentVehiclePosition = position
+    
+    console.log(`🚗 Vehicle GPS Position Updated:`)
+    console.log(`   Previous: ${oldPosition.lat}, ${oldPosition.lng}`)
+    console.log(`   Current:  ${position.lat}, ${position.lng}`)
+    console.log(`   Source: ${source}`)
+    console.log(`   Timestamp: ${new Date().toISOString()}`)
+    
+    // Update current location for all passengers on bus
+    let passengersUpdated = 0
+    for (let [cardId, passenger] of passengersOnBus) {
+      passenger.currentLatitude = position.lat
+      passenger.currentLongitude = position.lng
+      passengersUpdated++
+    }
+    
+    if (passengersUpdated > 0) {
+      console.log(`   📍 Updated location for ${passengersUpdated} passengers`)
+    }
+  }
+
+// Store passengers currently on bus
+const passengersOnBus = new Map();
+
 // Store for RFID card scans (in memory - in production use database)
-let recentCardScans = new Map()
-const SCAN_DEBOUNCE_TIME = 3000 // 3 seconds
+let recentCardScans = new Map();
+const SCAN_DEBOUNCE_TIME = 3000; // 3 seconds
+
+// WebSocket connections storage
+const connectedClients = new Set();
 
 // Geoapify API configuration
 const GEOAPIFY_API_KEY = '7fa23b5a9b194102a9be9a11ce64a57c'
@@ -75,11 +138,10 @@ async function calculateTravelDistance(originCoords, destinationCoords) {
   }
 }
 
-// Function to calculate fare based on distance
+// Function to calculate fare based on distance (20 BDT per km)
 function calculateFare(distanceKm) {
-  const baseFare = 10 // Base fare in BDT
-  const perKmRate = 5 // Rate per km in BDT
-  return Math.ceil(baseFare + (distanceKm * perKmRate))
+  const farePerKm = 20 // Rate per km in BDT
+  return Math.max(20, Math.round(distanceKm * farePerKm)) // Minimum 20 BDT
 }
 
 // Helper function to make Supabase REST API calls
@@ -113,9 +175,40 @@ async function supabaseRequest(endpoint, options = {}) {
 // WebSocket connection handling
 io.on('connection', (socket) => {
   console.log(`WebSocket client connected: ${socket.id}`)
+  connectedClients.add(socket)
   
   socket.on('disconnect', () => {
     console.log(`WebSocket client disconnected: ${socket.id}`)
+    connectedClients.delete(socket)
+  })
+  
+  // Handle vehicle position updates from Smart Transit Simulation
+  socket.on('vehicle_position_update', (data) => {
+    const { lat, lng, address, busId = 'BUS001' } = data
+    
+    if (lat && lng) {
+      console.log(`📡 WebSocket GPS Update Received: ${parseFloat(lat)}, ${parseFloat(lng)}`)
+      
+      // Update the vehicle position for RFID system
+      updateVehiclePosition({ lat: parseFloat(lat), lng: parseFloat(lng) }, 'WEBSOCKET')
+      
+      currentBusLocation = {
+        lat: parseFloat(lat),
+        lng: parseFloat(lng),
+        address: address || `${lat}, ${lng}`,
+        busId,
+        timestamp: new Date().toISOString()
+      }
+      
+      // Broadcast position update to all connected clients
+      socket.broadcast.emit('bus_location_update', {
+        type: 'bus_location_update',
+        location: currentBusLocation,
+        timestamp: new Date().toISOString()
+      })
+    } else {
+      console.warn(`⚠️  Invalid GPS data received via WebSocket:`, data)
+    }
   })
   
   // Handle RFID simulation from frontend
@@ -157,12 +250,82 @@ function getWirelessIPAddress() {
   return 'IP not found'
 }
 
-// Enhanced RFID handling function with location tracking (safe version)
+// Enhanced RFID handling function with vehicle GPS position tracking
 async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
   try {
-    const { card_id, device_id, location, latitude, longitude } = data
+    // Smart GPS coordinate selection logic:
+    // 1. If scan includes GPS that's different from default coordinates, use it
+    // 2. If scan includes GPS that matches default coordinates, check if we have better vehicle position
+    // 3. Use current vehicle position if it's been updated from WebSocket
+    // 4. Default fallback coordinates (last resort)
     
-    if (!card_id) {
+    let vehicleLat, vehicleLng, coordinateSource
+    const DEFAULT_LAT = 23.8103
+    const DEFAULT_LNG = 90.4125
+    
+    // Check if scan request includes GPS coordinates
+    const scanLat = data.latitude || data.lat
+    const scanLng = data.longitude || data.lng
+    
+    if (scanLat && scanLng) {
+      const providedLat = parseFloat(scanLat)
+      const providedLng = parseFloat(scanLng)
+      
+      // Check if the provided coordinates are just default values
+      const isDefaultCoords = (providedLat === DEFAULT_LAT && providedLng === DEFAULT_LNG)
+      const hasUpdatedVehiclePosition = !(currentVehiclePosition.lat === DEFAULT_LAT && currentVehiclePosition.lng === DEFAULT_LNG)
+      
+      if (isDefaultCoords && hasUpdatedVehiclePosition) {
+        // Arduino sent default coords, but we have real vehicle position - use vehicle position
+        vehicleLat = currentVehiclePosition.lat
+        vehicleLng = currentVehiclePosition.lng
+        coordinateSource = 'VEHICLE_POSITION_PREFERRED'
+        console.log(`📍 Arduino sent default GPS (${providedLat}, ${providedLng}), using real vehicle position: ${vehicleLat}, ${vehicleLng}`)
+        
+      } else if (!isDefaultCoords) {
+        // Arduino sent real GPS coordinates - use them and update vehicle position
+        vehicleLat = providedLat
+        vehicleLng = providedLng
+        coordinateSource = 'SCAN_REQUEST'
+        
+        updateVehiclePosition({ lat: vehicleLat, lng: vehicleLng }, `RFID_${deviceSource}`)
+        console.log(`📍 GPS coordinates received from ${deviceSource} scan: ${vehicleLat}, ${vehicleLng}`)
+        
+      } else {
+        // Arduino sent default coords and we don't have better vehicle position
+        vehicleLat = providedLat
+        vehicleLng = providedLng
+        coordinateSource = 'SCAN_REQUEST_DEFAULT'
+        console.log(`⚠️ Using default GPS from ${deviceSource} scan: ${vehicleLat}, ${vehicleLng}`)
+      }
+      
+    } else {
+      // No GPS in scan request - use current vehicle position
+      vehicleLat = currentVehiclePosition.lat
+      vehicleLng = currentVehiclePosition.lng
+      coordinateSource = 'VEHICLE_POSITION'
+      
+      // Check if we're still using default coordinates
+      if (vehicleLat === DEFAULT_LAT && vehicleLng === DEFAULT_LNG) {
+        console.warn(`⚠️  WARNING: Using default GPS coordinates for RFID scan! No actual vehicle GPS received yet.`)
+        coordinateSource = 'DEFAULT_FALLBACK'
+      }
+    }
+    
+    // Get location name from the determined coordinates
+    const locationName = await reverseGeocode(vehicleLat, vehicleLng)
+    
+    const { card_id, cardId } = data
+    const actualCardId = card_id || cardId
+    
+    console.log(`🔍 RFID Scan Details:`)
+    console.log(`   Card ID: ${actualCardId}`)
+    console.log(`   GPS Source: ${coordinateSource}`)
+    console.log(`   Final Coordinates: ${vehicleLat}, ${vehicleLng}`)
+    console.log(`   Location: ${locationName}`)
+    console.log(`   Device: ${deviceSource}`)
+    
+    if (!actualCardId) {
       return { 
         success: false, 
         message: 'Card ID is required',
@@ -171,7 +334,7 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
     }
 
     const now = Date.now()
-    const lastScan = recentCardScans.get(card_id)
+    const lastScan = recentCardScans.get(actualCardId)
     
     // Debounce duplicate scans
     if (lastScan && (now - lastScan) < SCAN_DEBOUNCE_TIME) {
@@ -182,10 +345,10 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
       }
     }
     
-    recentCardScans.set(card_id, now)
+    recentCardScans.set(actualCardId, now)
     
-    // Find user by card_id
-    const users = await supabaseRequest(`user_profile?card_id=eq.${card_id}&select=*`)
+    // Find user by card_id (matching with CARD_ID column)
+    const users = await supabaseRequest(`user_profile?card_id=eq.${actualCardId}&select=*`)
     
     if (users.length === 0) {
       return {
@@ -198,8 +361,8 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
     
     const user = users[0]
     
-    // Check if user has sufficient balance
-    if (user.balance < 10) { // Minimum fare
+    // Check if user has sufficient balance (minimum 20 BDT for 1km journey)
+    if (user.balance < 20) { // Minimum fare for 1km
       return {
         success: false,
         message: 'Insufficient balance',
@@ -214,30 +377,31 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
     if (activeTravel.length > 0) {
       // End current travel - DESTINATION SCAN
       const travel = activeTravel[0]
-      let calculatedFare = 15 // Default fare
-      let distanceInfo = null
       
-      // Try to calculate distance if coordinates are available
-      try {
-        if (latitude && longitude && travel.pick_point) {
-          // Simple distance calculation (in real implementation, you'd use proper coordinates)
-          // For now, use a basic fare calculation based on travel time
-          const travelStartTime = new Date(travel.created_at)
-          const travelDuration = (now - travelStartTime.getTime()) / 1000 // seconds
-          const travelMinutes = Math.floor(travelDuration / 60)
-          
-          // Dynamic fare: base + time-based
-          calculatedFare = Math.max(15, 10 + Math.floor(travelMinutes / 5) * 5) // 5 BDT per 5 minutes
-          
-          distanceInfo = {
-            duration: travelDuration,
-            durationMinutes: travelMinutes,
-            distanceKm: 'Calculated'
-          }
-        }
-      } catch (distanceError) {
-        console.log('Distance calculation failed, using default fare:', distanceError.message)
-      }
+      // Get boarding coordinates from when journey started
+      const boardingLat = parseFloat(travel.current_latitude)
+      const boardingLng = parseFloat(travel.current_longitude)
+      
+      // Current exit coordinates from vehicle GPS
+      const exitLat = vehicleLat
+      const exitLng = vehicleLng
+      
+      // Calculate actual distance traveled from boarding to exit point
+      const distance = calculateDistance(
+        boardingLat,
+        boardingLng,
+        exitLat,
+        exitLng
+      )
+      
+      console.log(`Distance calculation: Boarding(${boardingLat}, ${boardingLng}) -> Exit(${exitLat}, ${exitLng}) = ${distance.toFixed(2)}km`)
+      
+      // Simple fare calculation: 20 BDT per kilometer
+      const FARE_PER_KM = 20; // 20 BDT per kilometer
+      let calculatedFare = Math.max(20, distance * FARE_PER_KM); // Minimum 20 BDT for any journey
+      
+      calculatedFare = Math.round(calculatedFare);
+      console.log(`Fare calculation: ${distance.toFixed(2)}km × ৳${FARE_PER_KM}/km = ৳${calculatedFare}`)
       
       const newBalance = user.balance - calculatedFare
       
@@ -249,6 +413,9 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
           display: [`Fare: ${calculatedFare} BDT`, `Balance: ${user.balance} BDT`]
         }
       }
+      
+      const journeyDurationMinutes = (new Date() - new Date(travel.created_at)) / (1000 * 60)
+      const journeyDuration = formatJourneyTime(journeyDurationMinutes)
       
       // Update user balance
       await supabaseRequest(`user_profile?user_id=eq.${user.user_id}`, {
@@ -262,60 +429,116 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
         body: JSON.stringify({
           user_id: user.user_id,
           pick_point: travel.pick_point,
-          drop_point: location || 'Unknown Destination',
+          drop_point: locationName,
           total_cost: calculatedFare,
           remaining_balance: newBalance,
-          travel_time: travel.created_at
+          travel_time: new Date().toISOString()
         })
       })
+      
+      console.log(`Journey completed: ${user.name} traveled ${distance.toFixed(2)}km from ${travel.pick_point} to ${locationName}, fare: ৳${calculatedFare}`)
       
       // Delete from current travel
       await supabaseRequest(`current_travel?user_id=eq.${user.user_id}`, {
         method: 'DELETE'
       })
       
-      // Broadcast user update via WebSocket
-      io.emit('user_update', {
-        user_id: user.user_id,
-        balance: newBalance,
-        action: 'travel_end'
-      })
-      
-      return {
-        success: true,
-        message: 'Travel ended',
-        action: 'success_beep',
-        display: [
-          `Journey Complete`,
-          distanceInfo ? `${distanceInfo.durationMinutes}min - ${calculatedFare} BDT` : `Fare: ${calculatedFare} BDT`
-        ],
-        user: {
-          name: user.name,
-          balance: newBalance,
-          fare_deducted: calculatedFare,
-          travel_info: distanceInfo
+        // Send journey completion email
+        try {
+          const fareDetails = {
+            total_cost: calculatedFare,
+            remaining_balance: newBalance,
+            duration_minutes: Math.round(journeyDurationMinutes)
+          }
+          
+          const journeyData = {
+            pick_point: travel.pick_point,
+            drop_point: locationName,
+            travel_time: new Date().toISOString()
+          }
+          
+          await sendJourneyCompleteEmail(user, journeyData, fareDetails)
+          console.log(`Journey completion email sent to ${user.email}`)
+          
+          // Send low balance alert if balance is low (less than 100 BDT for 5km journey)
+          if (newBalance < 100) {
+            await sendLowBalanceAlert(user, newBalance)
+            console.log(`Low balance alert sent to ${user.email}`)
+          }
+          
+        } catch (emailError) {
+          console.error('Email sending failed:', emailError)
+          // Don't fail the transaction if email fails
         }
-      }
+        
+        // Remove passenger from bus
+        passengersOnBus.delete(actualCardId)
+        
+        // Broadcast user update via WebSocket
+        io.emit('user_update', {
+          user_id: user.user_id,
+          balance: newBalance,
+          action: 'travel_end'
+        })
+        
+        return {
+          success: true,
+          message: 'Travel ended',
+          action: 'success_beep',
+          display: [
+            `Journey Complete`,
+            `Distance: ${distance.toFixed(2)}km`,
+            `Fare: ৳${calculatedFare}`,
+            `Balance: ৳${newBalance.toFixed(2)}`
+          ],
+          user: {
+            name: user.name,
+            balance: newBalance,
+            fare_deducted: calculatedFare,
+            distance: distance.toFixed(2),
+            boarding_location: travel.pick_point,
+            exit_location: locationName,
+            boarding_coords: `${boardingLat}, ${boardingLng}`,
+            exit_coords: `${exitLat}, ${exitLng}`
+          }
+        }
       
     } else {
-      // Start new travel - ORIGIN SCAN
+      // Start new travel - ORIGIN SCAN (using vehicle GPS position)
+      console.log(`Journey started: Boarding at vehicle GPS (${vehicleLat}, ${vehicleLng}) - ${locationName}`)
+      
       await supabaseRequest('current_travel', {
         method: 'POST',
         body: JSON.stringify({
           user_id: user.user_id,
-          pick_point: location || 'Unknown Origin',
-          current_longitude: longitude || 0,
-          current_latitude: latitude || 0
+          pick_point: locationName,
+          current_latitude: vehicleLat.toString(),
+          current_longitude: vehicleLng.toString()
         })
       })
       
-      // Broadcast travel update via WebSocket
-      io.emit('travel_update', {
-        user_id: user.user_id,
-        action: 'travel_start',
-        pick_point: location || 'Unknown Origin',
-        coordinates: { latitude, longitude }
-      })
+        // Add passenger to bus tracking
+        passengersOnBus.set(actualCardId, {
+          name: user.name,
+          email: user.email,
+          card_id: actualCardId,
+          balance: user.balance,
+          boardTime: new Date().toISOString(),
+          boardLocation: locationName,
+          boardLatitude: vehicleLat,
+          boardLongitude: vehicleLng,
+          currentLatitude: vehicleLat,
+          currentLongitude: vehicleLng,
+          coordinateSource: coordinateSource
+        })
+        
+        // Broadcast travel update via WebSocket
+        io.emit('travel_update', {
+          user_id: user.user_id,
+          action: 'travel_start',
+          pick_point: locationName,
+          coordinates: { latitude: vehicleLat, longitude: vehicleLng }
+        })
       
       return {
         success: true,
@@ -325,7 +548,12 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
         user: {
           name: user.name,
           balance: user.balance,
-          origin_location: location || 'City Terminal'
+          origin_location: locationName
+        },
+        busLocation: {
+          lat: vehicleLat,
+          lng: vehicleLng,
+          address: locationName
         }
       }
     }
@@ -400,6 +628,13 @@ app.get('/api/health', (req, res) => {
 // Enhanced RFID Card scan endpoint for Arduino ESP
 app.post('/api/rfid/scan', async (req, res) => {
   try {
+    console.log(`🤖 Arduino RFID scan request:`, {
+      card: req.body.card_id,
+      gps: req.body.latitude && req.body.longitude ? 
+        `${req.body.latitude}, ${req.body.longitude}` : 'Not provided',
+      body: req.body
+    });
+    
     const response = await handleRFIDScan(req.body, 'ARDUINO')
     
     // Broadcast scan event via WebSocket
@@ -457,10 +692,24 @@ app.get('/api/users', async (req, res) => {
 })
 
 // Get currently traveling users (online users)
-app.get('/api/current-travel', async (req, res) => {
+app.get('/api/current-travel-all', async (req, res) => {
   try {
     const currentTravels = await supabaseRequest('current_travel?select=user_id,pick_point,current_longitude,current_latitude,created_at,user_profile(name,email,card_id,balance)&order=created_at.desc')
-    res.json({ success: true, data: currentTravels, count: currentTravels.length })
+    
+    // Update all passenger locations to current vehicle position
+    const updatedTravels = currentTravels.map(passenger => ({
+      ...passenger,
+      current_latitude: currentVehiclePosition.lat.toString(),
+      current_longitude: currentVehiclePosition.lng.toString(),
+      vehicle_position: currentVehiclePosition
+    }))
+    
+    res.json({ 
+      success: true, 
+      data: updatedTravels, 
+      count: updatedTravels.length,
+      currentVehiclePosition: currentVehiclePosition
+    })
   } catch (error) {
     res.status(500).json({ success: false, message: error.message })
   }
@@ -488,17 +737,22 @@ app.get('/api/travel-history', async (req, res) => {
 // Get current travel status (users currently on bus)
 app.get('/api/current-travel', async (req, res) => {
   try {
-    const currentTravel = await supabaseRequest(`
-      current_travel?select=
-        user_id,
-        pick_point,
-        current_longitude,
-        current_latitude,
-        created_at,
-        user_profile!inner(name,email,card_id)
-      &order=created_at.desc
-    `)
-    res.json({ success: true, data: currentTravel, count: currentTravel.length })
+    const currentTravel = await supabaseRequest(`current_travel?select=user_id,pick_point,current_longitude,current_latitude,created_at,user_profile!inner(name,email,card_id,balance)&order=created_at.desc`)
+    
+    // Update all passenger locations to current vehicle position
+    const updatedTravel = currentTravel.map(passenger => ({
+      ...passenger,
+      current_latitude: currentVehiclePosition.lat.toString(),
+      current_longitude: currentVehiclePosition.lng.toString(),
+      vehicle_position: currentVehiclePosition
+    }))
+    
+    res.json({ 
+      success: true, 
+      data: updatedTravel, 
+      count: updatedTravel.length,
+      currentVehiclePosition: currentVehiclePosition
+    })
   } catch (error) {
     console.error('Current travel API error:', error)
     res.status(500).json({ success: false, message: error.message })
@@ -509,16 +763,7 @@ app.get('/api/current-travel', async (req, res) => {
 app.get('/api/travel-history/:userId', async (req, res) => {
   try {
     const { userId } = req.params
-    const travelHistory = await supabaseRequest(`
-      travel_history?user_id=eq.${userId}&select=
-        user_id,
-        pick_point,
-        drop_point,
-        total_cost,
-        remaining_balance,
-        travel_time
-      &order=travel_time.desc&limit=20
-    `)
+    const travelHistory = await supabaseRequest(`travel_history?user_id=eq.${userId}&select=user_id,pick_point,drop_point,total_cost,remaining_balance,travel_time&order=travel_time.desc&limit=20`)
     res.json({ success: true, data: travelHistory, count: travelHistory.length })
   } catch (error) {
     console.error('Travel history API error:', error)
@@ -529,17 +774,7 @@ app.get('/api/travel-history/:userId', async (req, res) => {
 // Get all travel history
 app.get('/api/travel-history', async (req, res) => {
   try {
-    const travelHistory = await supabaseRequest(`
-      travel_history?select=
-        user_id,
-        pick_point,
-        drop_point,
-        total_cost,
-        remaining_balance,
-        travel_time,
-        user_profile!inner(name,email,card_id)
-      &order=travel_time.desc&limit=50
-    `)
+    const travelHistory = await supabaseRequest(`travel_history?select=user_id,pick_point,drop_point,total_cost,remaining_balance,travel_time,user_profile!inner(name,email,card_id)&order=travel_time.desc&limit=50`)
     res.json({ success: true, data: travelHistory, count: travelHistory.length })
   } catch (error) {
     console.error('All travel history API error:', error)
@@ -675,6 +910,404 @@ app.post('/logout', (req, res) => {
     res.redirect('/login')
   })
 })
+
+// Additional RFID endpoints for frontend integration
+app.post('/api/rfid-scan', async (req, res) => {
+  try {
+    const { 
+      rfidCard, 
+      scanType = 'entry', 
+      busId = 'BUS001',
+      latitude,
+      longitude,
+      lat,
+      lng 
+    } = req.body;
+    
+    if (!rfidCard) {
+      return res.status(400).json({ error: 'RFID card data is required' });
+    }
+
+    // Format the request to match existing handleRFIDScan function
+    const scanData = {
+      cardId: rfidCard,
+      busId: busId,
+      scanType: scanType,
+      // Include GPS coordinates if provided
+      latitude: latitude || lat,
+      longitude: longitude || lng
+    };
+
+    console.log(`📱 Frontend RFID scan request:`, {
+      card: rfidCard,
+      gps: scanData.latitude && scanData.longitude ? 
+        `${scanData.latitude}, ${scanData.longitude}` : 'Not provided'
+    });
+
+    const response = await handleRFIDScan(scanData, 'FRONTEND');
+    
+    // Broadcast scan event via WebSocket with current vehicle location
+    io.emit('rfid_scan', {
+      type: 'rfid_scan',
+      rfidCard,
+      action: response.action,
+      busLocation: currentBusLocation, // Use actual current location
+      fare: response.fare || 0,
+      timestamp: new Date().toISOString(),
+      source: 'FRONTEND'
+    });
+
+    res.json({
+      type: 'rfid_scan',
+      success: response.success,
+      action: response.action,
+      rfidCard,
+      busLocation: currentBusLocation, // Use actual current location
+      fare: response.fare || 0,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('RFID scan error:', error);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: error.message 
+    });
+  }
+});
+
+// GPS Status endpoint - useful for debugging
+app.get('/api/gps/status', (req, res) => {
+  const DEFAULT_LAT = 23.8103
+  const DEFAULT_LNG = 90.4125
+  const isDefaultCoords = (currentVehiclePosition.lat === DEFAULT_LAT && currentVehiclePosition.lng === DEFAULT_LNG)
+  
+  res.json({
+    success: true,
+    vehicle_position: currentVehiclePosition,
+    default_coordinates: { lat: DEFAULT_LAT, lng: DEFAULT_LNG },
+    is_using_default_coordinates: isDefaultCoords,
+    coordinate_source: isDefaultCoords ? 'DEFAULT_FALLBACK' : 'REAL_GPS',
+    last_updated: new Date().toISOString(),
+    passengers_on_bus: passengersOnBus.size,
+    passengers: Array.from(passengersOnBus.entries()).map(([cardId, passenger]) => ({
+      card_id: cardId,
+      name: passenger.name,
+      coordinate_source: passenger.coordinateSource || 'UNKNOWN',
+      boarding_coords: `${passenger.boardLatitude}, ${passenger.boardLongitude}`,
+      current_coords: `${passenger.currentLatitude}, ${passenger.currentLongitude}`
+    })),
+    warning: isDefaultCoords ? 'Still using default coordinates - no real GPS updates received yet' : null,
+    recommendations: isDefaultCoords ? [
+      'Ensure frontend is sending vehicle_position_update via WebSocket',
+      'Check if RFID scan requests include real GPS coordinates',
+      'Verify the Smart Transit Simulation is running and sending position updates'
+    ] : null
+  })
+})
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    connectedClients: io.engine.clientsCount,
+    service: 'Smart Transit RFID Server'
+  });
+});
+
+// Get current passengers endpoint
+app.get('/api/passengers', async (req, res) => {
+  try {
+    const passengers = Array.from(passengersOnBus.entries()).map(([rfidCard, info]) => {
+      const journeyTimeMinutes = Math.floor((new Date() - new Date(info.boardTime)) / (1000 * 60))
+      
+      // Use current vehicle position for all passengers (they're all on the same bus)
+      const currentLat = currentVehiclePosition.lat
+      const currentLng = currentVehiclePosition.lng
+      
+      return {
+        name: info.name,
+        card_id: rfidCard,
+        email: info.email,
+        balance: `৳${info.balance.toFixed(2)}`,
+        boardedAt: info.boardLocation,
+        journeyTime: `${journeyTimeMinutes} minutes`,
+        location: `${currentLat}, ${currentLng}`,
+        coordinates: {
+          lat: currentLat,
+          lng: currentLng
+        },
+        boardCoordinates: {
+          lat: info.boardLatitude,
+          lng: info.boardLongitude
+        },
+        duration: Math.floor((new Date() - new Date(info.boardTime)) / 1000) // seconds
+      }
+    })
+
+    res.json({
+      count: passengersOnBus.size,
+      passengers: passengers,
+      busLocation: currentVehiclePosition, // Use current vehicle position
+      currentBusPosition: currentVehiclePosition // Also provide as separate field
+    });
+  } catch (error) {
+    console.error('Error getting passengers:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update bus location endpoint
+app.post('/api/update-bus-location', (req, res) => {
+  try {
+    const { lat, lng, address, busId = 'BUS001' } = req.body;
+    
+    if (!lat || !lng) {
+      return res.status(400).json({ error: 'Latitude and longitude are required' });
+    }
+
+    currentBusLocation = {
+      lat: parseFloat(lat),
+      lng: parseFloat(lng),
+      address: address || `${lat}, ${lng}`,
+      busId,
+      timestamp: new Date().toISOString()
+    };
+
+    console.log(`Bus ${busId} location updated:`, currentBusLocation);
+
+    // Broadcast location update
+    io.emit('bus_location_update', {
+      type: 'bus_location_update',
+      busId,
+      location: currentBusLocation,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({ 
+      success: true, 
+      location: currentBusLocation 
+    });
+
+  } catch (error) {
+    console.error('Error updating bus location:', error);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: error.message 
+    });
+  }
+});
+
+// Geocoding API endpoints for testing
+app.get('/api/geocode/reverse/:lat/:lng', async (req, res) => {
+  try {
+    const { lat, lng } = req.params;
+    const address = await reverseGeocode(parseFloat(lat), parseFloat(lng));
+    res.json({ 
+      success: true, 
+      coordinates: { lat: parseFloat(lat), lng: parseFloat(lng) },
+      address: address 
+    });
+  } catch (error) {
+    console.error('Reverse geocoding error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+app.get('/api/geocode/forward', async (req, res) => {
+  try {
+    const { address } = req.query;
+    if (!address) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Address parameter is required' 
+      });
+    }
+    
+    const result = await forwardGeocode(address);
+    res.json({ 
+      success: true, 
+      result: result 
+    });
+  } catch (error) {
+    console.error('Forward geocoding error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Test current vehicle position geocoding
+app.get('/api/vehicle/location', async (req, res) => {
+  try {
+    const address = await reverseGeocode(currentVehiclePosition.lat, currentVehiclePosition.lng);
+    res.json({ 
+      success: true,
+      position: currentVehiclePosition,
+      address: address,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Vehicle location error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Reset travel database endpoint
+app.post('/api/admin/reset-travel-data', async (req, res) => {
+  try {
+    console.log('🔄 Resetting travel database...')
+    
+    // Clear current travel data - DELETE ALL PASSENGERS
+    try {
+      const allCurrentTravel = await supabaseRequest('current_travel?select=*')
+      
+      if (allCurrentTravel && allCurrentTravel.length > 0) {
+        console.log(`Found ${allCurrentTravel.length} current travel records to delete`)
+        console.log('Current travel record structure:', Object.keys(allCurrentTravel[0]))
+        
+        // Find the primary key column
+        const firstRecord = allCurrentTravel[0]
+        let primaryKeyColumn = null
+        
+        if (firstRecord.id) primaryKeyColumn = 'id'
+        else if (firstRecord.travel_id) primaryKeyColumn = 'travel_id'
+        else if (firstRecord.user_id) primaryKeyColumn = 'user_id' // Use user_id as unique identifier
+        
+        console.log('Using primary key column for current_travel:', primaryKeyColumn)
+        
+        if (primaryKeyColumn) {
+          for (const record of allCurrentTravel) {
+            try {
+              await supabaseRequest(`current_travel?${primaryKeyColumn}=eq.${record[primaryKeyColumn]}`, {
+                method: 'DELETE'
+              })
+            } catch (deleteError) {
+              console.log(`Failed to delete current travel record ${record[primaryKeyColumn]}:`, deleteError.message)
+            }
+          }
+        }
+        console.log('Current travel data cleared successfully')
+      } else {
+        console.log('No current travel records found to delete')
+      }
+    } catch (error) {
+      console.log('Current travel clearing completed. Error:', error.message)
+    }
+    
+    // Clear travel history (optional - comment out if you want to keep history)
+    try {
+      // First, get all travel history records to see their structure
+      const allHistory = await supabaseRequest('travel_history?select=*')
+      
+      if (allHistory && allHistory.length > 0) {
+        console.log(`Found ${allHistory.length} travel history records to delete`)
+        console.log('Sample record structure:', Object.keys(allHistory[0]))
+        
+        // Try different possible column names for the primary key
+        const firstRecord = allHistory[0]
+        let primaryKeyColumn = null
+        
+        // Check for common primary key column names
+        if (firstRecord.id) primaryKeyColumn = 'id'
+        else if (firstRecord.history_id) primaryKeyColumn = 'history_id'
+        else if (firstRecord.HISTORY_ID) primaryKeyColumn = 'HISTORY_ID'
+        else if (firstRecord.user_id && firstRecord.travel_time) {
+          // Use a combination if no single primary key
+          primaryKeyColumn = 'composite'
+        }
+        
+        console.log('Using primary key column:', primaryKeyColumn)
+        
+        if (primaryKeyColumn === 'composite') {
+          // Delete using user_id and travel_time combination
+          for (const record of allHistory) {
+            try {
+              await supabaseRequest(`travel_history?user_id=eq.${record.user_id}&travel_time=eq.${record.travel_time}`, {
+                method: 'DELETE'
+              })
+            } catch (deleteError) {
+              console.log(`Failed to delete record for user ${record.user_id}:`, deleteError.message)
+            }
+          }
+        } else if (primaryKeyColumn) {
+          // Delete using the primary key
+          for (const record of allHistory) {
+            try {
+              await supabaseRequest(`travel_history?${primaryKeyColumn}=eq.${record[primaryKeyColumn]}`, {
+                method: 'DELETE'
+              })
+            } catch (deleteError) {
+              console.log(`Failed to delete record ${record[primaryKeyColumn]}:`, deleteError.message)
+            }
+          }
+        } else {
+          console.log('Could not determine primary key column. Manual cleanup may be needed.')
+        }
+        
+        console.log('Travel history cleared successfully')
+      } else {
+        console.log('No travel history records found to delete')
+      }
+    } catch (error) {
+      console.log('Travel history clearing completed. Error:', error.message)
+    }
+    
+    // Clear in-memory passenger tracking
+    passengersOnBus.clear()
+    recentCardScans.clear()
+    
+    // Reset vehicle position to default
+    currentVehiclePosition = {
+      lat: 23.8103,
+      lng: 90.4125
+    }
+    
+    currentBusLocation = {
+      lat: 23.8103,
+      lng: 90.4125,
+      address: 'City Terminal',
+      busId: 'BUS001',
+      timestamp: new Date().toISOString()
+    }
+    
+    console.log('✅ Travel database reset completed (all data cleared)')
+    
+    // Broadcast reset event to all connected clients
+    io.emit('travel_data_reset', {
+      message: 'All travel data has been reset',
+      timestamp: new Date().toISOString()
+    })
+    
+    res.json({
+      success: true,
+      message: 'Travel database reset successfully (all data cleared)',
+      details: {
+        currentTravelCleared: true,
+        travelHistoryCleared: true,
+        passengersCleared: passengersOnBus.size === 0,
+        recentScansCleared: recentCardScans.size === 0,
+        vehiclePositionReset: true
+      }
+    })
+    
+  } catch (error) {
+    console.error('Error resetting travel database:', error)
+    res.status(500).json({
+      success: false,
+      message: 'Failed to reset travel database',
+      error: error.message
+    })
+  }
+});
 
 // Error handling middleware
 app.use((err, req, res, next) => {

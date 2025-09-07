@@ -73,3 +73,53 @@ export interface WebSocketMessage {
   data: any;
   timestamp: string;
 }
+
+export interface Location {
+  lat: number;
+  lng: number;
+  name: string;
+  address?: string;
+}
+
+export interface RouteStop {
+  id: string;
+  name: string;
+  location: Location;
+  type: "bus_stop" | "station" | "terminal";
+}
+
+export interface TransportRoute {
+  id: string;
+  name: string;
+  stops: RouteStop[];
+  farePerKm: number;
+  minimumFare: number;
+}
+
+export interface VirtualVehicle {
+  id: string;
+  routeId: string;
+  currentLocation: Location;
+  speed: number; // km/h
+  isMoving: boolean;
+  passengers: string[]; // card_ids
+  capacity: number;
+  direction: "forward" | "backward";
+  nextStopIndex: number;
+}
+
+export interface TravelSimulation {
+  id: string;
+  vehicleId: string;
+  cardId: string;
+  userName: string;
+  startLocation: Location;
+  currentLocation: Location;
+  endLocation?: Location;
+  distance: number;
+  fare: number;
+  status: "boarding" | "traveling" | "completed";
+  startTime: string;
+  endTime?: string;
+  route: Location[];
+}

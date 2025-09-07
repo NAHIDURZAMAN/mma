@@ -217,9 +217,9 @@ export default function SimulatorPage() {
                   <div
                     key={user.user_id}
                     className={`p-3 border rounded-lg cursor-pointer hover:bg-muted/50 transition-colors ${
-                      selectedUser === user.user_id ? 'border-primary bg-primary/5' : ''
+                      selectedUser === user.user_id.toString() ? 'border-primary bg-primary/5' : ''
                     }`}
-                    onClick={() => handleUserSelect(user.user_id)}
+                    onClick={() => handleUserSelect(user.user_id.toString())}
                   >
                     <div className="flex items-center justify-between">
                       <div>
