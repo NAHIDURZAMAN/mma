@@ -23,18 +23,19 @@ const int serverPort = 2000;
 const char *endpoint = "/api/rfid/scan";
 
 // Bus location data
-struct BusLocation {
+struct BusLocation
+{
     double latitude;
     double longitude;
     String locationName;
 } busLocation;
 
-// Initialize bus location
-void initializeBusLocation() {
-    busLocation.latitude = 23.7465;
-    busLocation.longitude = 90.3765;
-    busLocation.locationName = "City Terminal";
-}
+// Bus capacity and passenger tracking
+const int totalSeats = 40;       // Bus এর মোট আসন
+int currentPassengers = 0;       // বর্তমান যাত্রী সংখ্যা
+int availableSeats = totalSeats; // বাকি আসন
+unsigned long lastStatusUpdate = 0;
+const unsigned long statusUpdateInterval = 5000; // 5 seconds
 
 // RFID scanning variables
 String rfidData = "";
@@ -43,18 +44,42 @@ String currentCardID = "";
 unsigned long lastScanTime = 0;
 unsigned long cardDetectionTime = 0;
 unsigned long lastSuccessfulScanTime = 0;
-const unsigned long scanDelay = 2000; // 2 seconds between ANY scans
-const unsigned long cardReadWindow = 1000; // 1 second window to collect card data
+const unsigned long scanDelay = 2000;            // 2 seconds between ANY scans
+const unsigned long cardReadWindow = 1000;       // 1 second window to collect card data
 const unsigned long absoluteDebounceTime = 3000; // 3 seconds absolute minimum between server requests
-bool isProcessing = false; // Flag to prevent multiple processing
-bool cardPresent = false; // Track if card is currently being read
-int consecutiveReads = 0; // Count consecutive reads of same card
-const int minConsecutiveReads = 3; // Minimum reads to confirm valid card
-bool cardValidated = false; // Track if current card has been validated
-String validatedCardID = ""; // Store the validated card ID
+bool isProcessing = false;                       // Flag to prevent multiple processing
+bool cardPresent = false;                        // Track if card is currently being read
+int consecutiveReads = 0;                        // Count consecutive reads of same card
+const int minConsecutiveReads = 3;               // Minimum reads to confirm valid card
+bool cardValidated = false;                      // Track if current card has been validated
+String validatedCardID = "";                     // Store the validated card ID
 
 WiFiClient wifiClient;
 HTTPClient http;
+
+// Forward declarations
+void connectToWiFi();
+void initializeBusLocation();
+String extractCardID(String data);
+void handleCardRead(String cardID);
+void processValidCard(String cardID);
+void sendCardToServer(String cardID);
+void handleServerResponse(StaticJsonDocument<500> &doc);
+void successBeep();
+void errorBeep();
+void openGate();
+void displayError(String line1, String line2);
+void getBusStatusFromServer();
+void updateBusStatusDisplay();
+void showTemporaryMessage(String line1, String line2);
+
+// Initialize bus location
+void initializeBusLocation()
+{
+    busLocation.latitude = 23.7465;
+    busLocation.longitude = 90.3765;
+    busLocation.locationName = "City Terminal";
+}
 
 void setup()
 {
@@ -85,6 +110,9 @@ void setup()
     lcd.setCursor(0, 1);
     lcd.print("Scan your card");
 
+    // Update bus status display every 5 seconds
+    updateBusStatusDisplay();
+
     Serial.println("=== Smart Transit RFID Scanner Ready ===");
 }
 
@@ -99,18 +127,25 @@ void loop()
     }
 
     unsigned long currentTime = millis();
-    
+
+    // Update bus status display periodically
+    updateBusStatusDisplay();
+
     // Absolute debounce - prevent ANY processing within absoluteDebounceTime
-    if (isProcessing || (currentTime - lastSuccessfulScanTime) < absoluteDebounceTime) {
+    if (isProcessing || (currentTime - lastSuccessfulScanTime) < absoluteDebounceTime)
+    {
         // Clear any incoming RFID data during debounce period
-        while (rdm6300.available()) {
+        while (rdm6300.available())
+        {
             rdm6300.read(); // Discard data
         }
-        
+
         // Show countdown on LCD during debounce
-        if ((currentTime - lastSuccessfulScanTime) < absoluteDebounceTime && lastSuccessfulScanTime > 0) {
+        if ((currentTime - lastSuccessfulScanTime) < absoluteDebounceTime && lastSuccessfulScanTime > 0)
+        {
             unsigned long remaining = (absoluteDebounceTime - (currentTime - lastSuccessfulScanTime)) / 1000;
-            if (remaining > 0 && !isProcessing) {
+            if (remaining > 0 && !isProcessing)
+            {
                 lcd.clear();
                 lcd.setCursor(0, 0);
                 lcd.print("Please Wait...");
@@ -128,8 +163,10 @@ void loop()
         char c = rdm6300.read();
         Serial.print(c, HEX); // Debug output
 
-        if (c == 0x02) { // Start byte
-            if (!cardPresent) {
+        if (c == 0x02)
+        { // Start byte
+            if (!cardPresent)
+            {
                 rfidData = "";
                 cardDetectionTime = currentTime;
                 cardPresent = true;
@@ -137,7 +174,7 @@ void loop()
                 cardValidated = false;
                 validatedCardID = "";
                 Serial.println("\n=== NEW CARD DETECTION STARTED ===");
-                
+
                 // Show "Reading..." on LCD immediately
                 lcd.clear();
                 lcd.setCursor(0, 0);
@@ -150,47 +187,58 @@ void loop()
         else if (cardPresent && rfidData.length() > 0)
         {
             rfidData += c;
-            
+
             // Check for end byte
-            if (c == 0x03 && rfidData.length() >= 14) { 
+            if (c == 0x03 && rfidData.length() >= 14)
+            {
                 // End byte - complete card read
                 String detectedCard = extractCardID(rfidData);
-                if (detectedCard.length() == 10) {
+                if (detectedCard.length() == 10)
+                {
                     handleCardRead(detectedCard);
-                } else {
+                }
+                else
+                {
                     Serial.println("Invalid card data length");
                 }
                 rfidData = ""; // Reset for next read
             }
-            else if (rfidData.length() > 20) { 
+            else if (rfidData.length() > 20)
+            {
                 // Prevent buffer overflow
                 rfidData = "";
                 Serial.println("Buffer overflow protection - clearing data");
             }
         }
     }
-    else {
+    else
+    {
         // Check if card was removed (no data for some time)
-        if (cardPresent && (currentTime - cardDetectionTime) > cardReadWindow) {
+        if (cardPresent && (currentTime - cardDetectionTime) > cardReadWindow)
+        {
             Serial.println("\n=== CARD DETECTION ENDED ===");
-            
-            if (cardValidated && validatedCardID.length() > 0) {
+
+            if (cardValidated && validatedCardID.length() > 0)
+            {
                 // Process the validated card
                 processValidCard(validatedCardID);
-            } else if (consecutiveReads > 0) {
+            }
+            else if (consecutiveReads > 0)
+            {
                 Serial.println("Card removed before validation completed (" + String(consecutiveReads) + "/" + String(minConsecutiveReads) + ")");
                 showTemporaryMessage("Scan Error", "Hold card longer");
             }
-            
+
             // Reset detection state
             cardPresent = false;
             currentCardID = "";
             consecutiveReads = 0;
             cardValidated = false;
             validatedCardID = "";
-            
+
             // Restore default display if not processing
-            if (!isProcessing) {
+            if (!isProcessing)
+            {
                 lcd.clear();
                 lcd.setCursor(0, 0);
                 lcd.print("Smart Transit");
@@ -201,23 +249,27 @@ void loop()
     }
 }
 
-String extractCardID(String data) {
+String extractCardID(String data)
+{
     // Extract the card ID from the RFID data frame
     // Format: STX (0x02) + 10 data bytes + checksum + ETX (0x03)
-    if (data.length() >= 14 && data.charAt(0) == 0x02 && data.charAt(13) == 0x03) {
+    if (data.length() >= 14 && data.charAt(0) == 0x02 && data.charAt(13) == 0x03)
+    {
         return data.substring(1, 11);
     }
     return "";
 }
 
-void handleCardRead(String cardID) {
+void handleCardRead(String cardID)
+{
     unsigned long currentTime = millis();
-    
+
     // If same card as current detection
-    if (cardID == currentCardID) {
+    if (cardID == currentCardID)
+    {
         consecutiveReads++;
         Serial.println("Consistent read #" + String(consecutiveReads) + "/" + String(minConsecutiveReads) + ": " + cardID);
-        
+
         // Show reading progress on LCD
         lcd.clear();
         lcd.setCursor(0, 0);
@@ -225,22 +277,26 @@ void handleCardRead(String cardID) {
         lcd.setCursor(0, 1);
         String progress = String(consecutiveReads) + "/" + String(minConsecutiveReads) + " " + cardID.substring(6);
         lcd.print(progress);
-        
+
         // Validate card after enough consistent reads
-        if (consecutiveReads >= minConsecutiveReads && !cardValidated) {
+        if (consecutiveReads >= minConsecutiveReads && !cardValidated)
+        {
             cardValidated = true;
             validatedCardID = cardID;
             Serial.println("*** CARD VALIDATED: " + cardID + " ***");
-            
+
             lcd.clear();
             lcd.setCursor(0, 0);
             lcd.print("Card Validated");
             lcd.setCursor(0, 1);
             lcd.print("Release to scan");
         }
-    } else {
+    }
+    else
+    {
         // Different card detected - reset validation
-        if (currentCardID != "") {
+        if (currentCardID != "")
+        {
             Serial.println("Card changed from " + currentCardID + " to " + cardID + " - resetting validation");
         }
         currentCardID = cardID;
@@ -248,7 +304,7 @@ void handleCardRead(String cardID) {
         cardValidated = false;
         validatedCardID = "";
         Serial.println("New card detected, starting validation: " + cardID);
-        
+
         // Show new card detection
         lcd.clear();
         lcd.setCursor(0, 0);
@@ -258,21 +314,23 @@ void handleCardRead(String cardID) {
     }
 }
 
-void processValidCard(String cardID) {
+void processValidCard(String cardID)
+{
     unsigned long currentTime = millis();
-    
+
     // Final safety check - ensure minimum time between scans
-    if ((currentTime - lastSuccessfulScanTime) < absoluteDebounceTime) {
+    if ((currentTime - lastSuccessfulScanTime) < absoluteDebounceTime)
+    {
         Serial.println("BLOCKED: Too soon after last scan");
         unsigned long remaining = (absoluteDebounceTime - (currentTime - lastSuccessfulScanTime)) / 1000;
         showTemporaryMessage("Too Soon", "Wait " + String(remaining) + "s");
         return;
     }
-    
+
     isProcessing = true;
     lastCardID = cardID;
     lastScanTime = currentTime;
-    
+
     Serial.println("=== PROCESSING VALIDATED CARD ===");
     Serial.print("Card ID: ");
     Serial.println(cardID);
@@ -331,14 +389,15 @@ void connectToWiFi()
     }
 }
 
-void showTemporaryMessage(String line1, String line2) {
+void showTemporaryMessage(String line1, String line2)
+{
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print(line1);
     lcd.setCursor(0, 1);
     lcd.print(line2);
     delay(800); // Reduced from 1500ms
-    
+
     // Restore default display
     lcd.clear();
     lcd.setCursor(0, 0);
@@ -358,7 +417,7 @@ void sendCardToServer(String cardID)
 
     // Mark the time when we actually send the request
     unsigned long sendTime = millis();
-    
+
     http.begin(wifiClient, serverHost, serverPort, endpoint);
     http.addHeader("Content-Type", "application/json");
 
@@ -420,7 +479,7 @@ void sendCardToServer(String cardID)
     }
 
     http.end();
-    
+
     // Reset processing state
     isProcessing = false;
     cardPresent = false;
@@ -428,7 +487,7 @@ void sendCardToServer(String cardID)
     consecutiveReads = 0;
     cardValidated = false;
     validatedCardID = "";
-    
+
     Serial.println("=== SCAN PROCESSING COMPLETE ===");
 }
 
@@ -461,15 +520,20 @@ void handleServerResponse(StaticJsonDocument<500> &doc)
     {
         lcd.clear();
         lcd.setCursor(0, 0);
-        if (message.indexOf("started") >= 0) {
+        if (message.indexOf("started") >= 0)
+        {
             lcd.print("Journey Started");
             lcd.setCursor(0, 1);
             lcd.print("Welcome aboard!");
-        } else if (message.indexOf("ended") >= 0) {
+        }
+        else if (message.indexOf("ended") >= 0)
+        {
             lcd.print("Journey Ended");
             lcd.setCursor(0, 1);
             lcd.print("Thank you!");
-        } else {
+        }
+        else
+        {
             lcd.print("Success");
             lcd.setCursor(0, 1);
             lcd.print(message.substring(0, 16));
@@ -489,6 +553,20 @@ void handleServerResponse(StaticJsonDocument<500> &doc)
     {
         successBeep();
         openGate();
+
+        // Update passenger count based on journey type
+        if (message.indexOf("started") >= 0)
+        {
+            currentPassengers++; // Passenger entered
+            availableSeats = totalSeats - currentPassengers;
+        }
+        else if (message.indexOf("ended") >= 0)
+        {
+            currentPassengers--; // Passenger exited
+            if (currentPassengers < 0)
+                currentPassengers = 0;
+            availableSeats = totalSeats - currentPassengers;
+        }
     }
     else if (action == "error_beep" || !success)
     {
@@ -500,12 +578,8 @@ void handleServerResponse(StaticJsonDocument<500> &doc)
     }
 
     // Reset display after delay
-    delay(2500); // Reduced from 4000ms
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Smart Transit");
-    lcd.setCursor(0, 1);
-    lcd.print("Scan your card");
+    delay(2500);              // Reduced from 4000ms
+    updateBusStatusDisplay(); // Show updated bus status
 }
 
 void successBeep()
@@ -545,14 +619,90 @@ void displayError(String line1, String line2)
     lcd.print(line2);
 
     errorBeep();
-    
+
     // Reset processing flag in case of error
     isProcessing = false;
 
-    delay(1200); // Reduced from 2000ms
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Smart Transit");
-    lcd.setCursor(0, 1);
-    lcd.print("Scan your card");
+    delay(1200);              // Reduced from 2000ms
+    updateBusStatusDisplay(); // Show bus status instead of default
+}
+
+// Function to get current passenger count from server
+void getBusStatusFromServer()
+{
+    WiFiClient client;
+    HTTPClient http;
+
+    http.begin(client, String("http://") + serverHost + ":" + String(serverPort) + "/api/current-travel");
+    http.addHeader("Content-Type", "application/json");
+
+    int httpResponseCode = http.GET();
+
+    if (httpResponseCode == 200)
+    {
+        String response = http.getString();
+
+        StaticJsonDocument<1000> doc;
+        DeserializationError error = deserializeJson(doc, response);
+
+        if (!error)
+        {
+            int onlineUsers = doc["count"]; // Current passengers from API
+            currentPassengers = onlineUsers;
+            availableSeats = totalSeats - currentPassengers;
+
+            // Ensure we don't go negative
+            if (availableSeats < 0)
+                availableSeats = 0;
+            if (currentPassengers > totalSeats)
+                currentPassengers = totalSeats;
+
+            Serial.println("Bus Status Updated - Passengers: " + String(currentPassengers) + ", Available: " + String(availableSeats));
+        }
+    }
+
+    http.end();
+}
+
+// Function to update bus status display
+void updateBusStatusDisplay()
+{
+    unsigned long currentTime = millis();
+
+    // Update every 5 seconds and when not processing
+    if ((currentTime - lastStatusUpdate) >= statusUpdateInterval && !isProcessing && !cardPresent)
+    {
+        lastStatusUpdate = currentTime;
+
+        // Get real-time data from server
+        getBusStatusFromServer();
+
+        // Display on LCD
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("P:" + String(currentPassengers) + " A:" + String(availableSeats));
+        lcd.setCursor(0, 1);
+
+        if (availableSeats == 0)
+        {
+            lcd.print("BUS FULL");
+        }
+        else if (availableSeats <= 5)
+        {
+            lcd.print("Few seats left");
+        }
+        else
+        {
+            lcd.print("Seats available");
+        }
+
+        delay(2000); // Show for 2 seconds
+
+        // Then show default scan message
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Smart Transit");
+        lcd.setCursor(0, 1);
+        lcd.print("Scan your card");
+    }
 }
