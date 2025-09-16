@@ -1,0 +1,11 @@
+{
+  "scripts": {
+    "start": "node openweb-websocket.js",
+    "dev": "node openweb-websocket.js",
+    "build": "echo 'No build step needed'",
+    "deploy": "npm start"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
