@@ -1,0 +1,412 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import { useAuth } from '@/contexts/AuthContext'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { MapPin, Users, Clock, Navigation, Wifi, WifiOff } from 'lucide-react'
+import dynamic from 'next/dynamic'
+import { io } from 'socket.io-client'
+import RechargeCard from '@/components/RechargeCard'
+
+// Dynamically import map component to avoid SSR issues
+const MapComponent = dynamic(() => import('@/components/BusLocationMap'), {
+  ssr: false,
+  loading: () => <div className="h-64 bg-gray-100 rounded-lg flex items-center justify-center">Loading Map...</div>
+})
+
+interface BusData {
+  currentLocation: {
+    latitude: number
+    longitude: number
+    locationName: string
+  }
+  passengers: {
+    current: number
+    total: number
+    available: number
+  }
+  lastUpdated: string
+  isOnline: boolean
+  isJourneyActive: boolean
+  journeyStatus: string
+}
+
+interface SimulationStatus {
+  isRunning: boolean
+  currentPosition: { lat: number; lng: number }
+  destinations: Array<{ lat: number; lng: number; name?: string }>
+  currentDestinationIndex: number
+  progress: number
+  isWaitingAtStation: boolean
+}
+
+export default function UserDashboard() {
+  const { user, isAuthenticated, refreshUser } = useAuth()
+  const [busData, setBusData] = useState<BusData | null>(null)
+  const [simulationStatus, setSimulationStatus] = useState<SimulationStatus | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [socket, setSocket] = useState<any>(null)
+
+  // Handle balance updates from payment
+  const handleBalanceUpdate = async () => {
+    try {
+      await refreshUser() // Refresh user data from AuthContext
+    } catch (error) {
+      console.error('Error refreshing user balance:', error)
+    }
+  }
+
+  // Connect to WebSocket for real-time simulation updates
+  useEffect(() => {
+    const socketConnection = io('http://localhost:2000')
+    
+    socketConnection.on('connect', () => {
+      console.log('Connected to simulation WebSocket')
+      setSocket(socketConnection)
+    })
+
+    socketConnection.on('simulation_status', (status: SimulationStatus) => {
+      console.log('Simulation status update:', status)
+      setSimulationStatus(status)
+    })
+
+    socketConnection.on('vehicle_position_update', (data: any) => {
+      console.log('Vehicle position update:', data)
+      if (simulationStatus?.isRunning) {
+        setSimulationStatus(prev => prev ? {
+          ...prev,
+          currentPosition: { lat: data.lat, lng: data.lng }
+        } : null)
+      }
+    })
+
+    socketConnection.on('balance_updated', (data: any) => {
+      console.log('Balance updated:', data)
+      if (data.userId === user?.user_id) {
+        handleBalanceUpdate()
+      }
+    })
+
+    socketConnection.on('disconnect', () => {
+      console.log('Disconnected from simulation WebSocket')
+      setSocket(null)
+    })
+
+    return () => {
+      socketConnection.disconnect()
+    }
+  }, [])
+
+  // Fetch bus data from API
+  const fetchBusData = async () => {
+    try {
+      setError(null)
+      
+      // Fetch current travel data (passenger count)
+      const travelResponse = await fetch('/api/current-travel')
+      const travelData = await travelResponse.json()
+
+      // Fetch bus location data 
+      const locationResponse = await fetch('/api/bus-location')
+      const locationData = await locationResponse.json()
+
+      // Check if simulation is running by checking smart-transit page status
+      let journeyActive = false
+      let journeyStatus = 'Bus is offline'
+      
+      if (simulationStatus?.isRunning) {
+        journeyActive = true
+        journeyStatus = simulationStatus.isWaitingAtStation 
+          ? `Arrived at Station ${simulationStatus.currentDestinationIndex + 1}` 
+          : `En route to Station ${simulationStatus.currentDestinationIndex + 1}`
+      }
+
+      setBusData({
+        currentLocation: {
+          latitude: journeyActive && simulationStatus ? simulationStatus.currentPosition.lat : (locationData.latitude || 23.8103),
+          longitude: journeyActive && simulationStatus ? simulationStatus.currentPosition.lng : (locationData.longitude || 90.4125),
+          locationName: journeyActive ? (simulationStatus?.destinations[simulationStatus.currentDestinationIndex]?.name || 'Moving') : 'Terminal (Offline)'
+        },
+        passengers: {
+          current: travelData.count || 0,
+          total: 40, // Bus capacity
+          available: 40 - (travelData.count || 0)
+        },
+        lastUpdated: new Date().toLocaleTimeString(),
+        isOnline: journeyActive,
+        isJourneyActive: journeyActive,
+        journeyStatus: journeyStatus
+      })
+    } catch (err) {
+      console.error('Error fetching bus data:', err)
+      setError('Failed to load bus information')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchBusData()
+      
+      // Set up polling for real-time updates every 5 seconds
+      const interval = setInterval(fetchBusData, 5000)
+      
+      return () => clearInterval(interval)
+    }
+  }, [isAuthenticated, simulationStatus])
+
+  // Trigger data refresh when simulation status changes
+  useEffect(() => {
+    if (simulationStatus) {
+      fetchBusData()
+    }
+  }, [simulationStatus?.isRunning, simulationStatus?.currentPosition])
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle className="text-center">Access Denied</CardTitle>
+            <CardDescription className="text-center">
+              Please log in to view your dashboard
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading dashboard...</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900">
+            Welcome back, {user?.name || 'User'}!
+          </h1>
+          <p className="text-gray-600 mt-2">
+            Real-time bus tracking and passenger information
+          </p>
+        </div>
+
+        {/* Error State */}
+        {error && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <p className="text-red-700">{error}</p>
+            <button 
+              onClick={fetchBusData}
+              className="mt-2 text-red-600 underline hover:text-red-800"
+            >
+              Try again
+            </button>
+          </div>
+        )}
+
+        {/* Dashboard Content */}
+        {busData && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Passenger Information */}
+            <div className="lg:col-span-1 space-y-6">
+              {/* Current Passengers Card */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="h-5 w-5 text-blue-600" />
+                    Passenger Count
+                  </CardTitle>
+                  <CardDescription>
+                    Real-time bus occupancy
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div className="text-center">
+                      <div className="text-4xl font-bold text-blue-600">
+                        {busData.passengers.current}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        of {busData.passengers.total} passengers
+                      </div>
+                    </div>
+                    
+                    {/* Occupancy Bar */}
+                    <div className="w-full bg-gray-200 rounded-full h-3">
+                      <div 
+                        className={`h-3 rounded-full transition-all duration-300 ${
+                          busData.passengers.current > 35 ? 'bg-red-500' :
+                          busData.passengers.current > 25 ? 'bg-yellow-500' :
+                          'bg-green-500'
+                        }`}
+                        style={{
+                          width: `${(busData.passengers.current / busData.passengers.total) * 100}%`
+                        }}
+                      ></div>
+                    </div>
+                    
+                    <div className="flex justify-between text-sm">
+                      <span className="text-green-600">
+                        {busData.passengers.available} seats available
+                      </span>
+                      <Badge variant={
+                        busData.passengers.available === 0 ? 'destructive' :
+                        busData.passengers.available <= 5 ? 'secondary' :
+                        'default'
+                      }>
+                        {busData.passengers.available === 0 ? 'Full' :
+                         busData.passengers.available <= 5 ? 'Almost Full' :
+                         'Available'}
+                      </Badge>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Location Info Card */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    {busData.isOnline ? (
+                      <Wifi className="h-5 w-5 text-green-600" />
+                    ) : (
+                      <WifiOff className="h-5 w-5 text-gray-500" />
+                    )}
+                    Bus Status
+                  </CardTitle>
+                  <CardDescription>
+                    {busData.isJourneyActive ? 'Journey in progress' : 'Bus is offline'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Badge variant={busData.isOnline ? "default" : "secondary"} 
+                             className={busData.isOnline ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600"}>
+                        {busData.isOnline ? "ONLINE" : "OFFLINE"}
+                      </Badge>
+                      {busData.isJourneyActive && (
+                        <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                          ACTIVE JOURNEY
+                        </Badge>
+                      )}
+                    </div>
+                    
+                    <div className="text-lg font-semibold">
+                      {busData.currentLocation.locationName}
+                    </div>
+                    
+                    {busData.isOnline ? (
+                      <div className="text-sm text-gray-600">
+                        <div>Lat: {busData.currentLocation.latitude.toFixed(6)}</div>
+                        <div>Lng: {busData.currentLocation.longitude.toFixed(6)}</div>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-gray-500">
+                        Bus is not currently running a journey
+                      </div>
+                    )}
+                    
+                    <div className="p-2 bg-gray-50 rounded-lg">
+                      <div className="text-sm font-medium text-gray-700">
+                        {busData.journeyStatus}
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center gap-1 text-xs text-gray-500">
+                      <Clock className="h-3 w-3" />
+                      Last updated: {busData.lastUpdated}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* User Info Card */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Your Profile</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    <div><strong>Name:</strong> {user?.name}</div>
+                    <div><strong>Email:</strong> {user?.email}</div>
+                    <div><strong>Balance:</strong> ৳{user?.balance || '0.00'}</div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Recharge Card */}
+              <RechargeCard user={user} onBalanceUpdate={handleBalanceUpdate} />
+            </div>
+
+            {/* Map Section */}
+            <div className="lg:col-span-2">
+              <Card className="h-full">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Navigation className="h-5 w-5 text-purple-600" />
+                    {busData.isOnline ? 'Live Bus Location' : 'Bus Location (Offline)'}
+                  </CardTitle>
+                  <CardDescription>
+                    {busData.isOnline 
+                      ? 'Real-time tracking on the map' 
+                      : 'Bus is not currently running. Start a journey from Smart Transit page to see live tracking.'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <div className="h-96 lg:h-[500px] relative">
+                    {busData.isOnline ? (
+                      <MapComponent 
+                        latitude={busData.currentLocation.latitude}
+                        longitude={busData.currentLocation.longitude}
+                        locationName={busData.currentLocation.locationName}
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-gradient-to-br from-gray-100 to-gray-200 rounded-lg flex items-center justify-center">
+                        <div className="text-center">
+                          <WifiOff className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+                          <h3 className="text-xl font-semibold text-gray-600 mb-2">Bus is Offline</h3>
+                          <p className="text-gray-500 mb-4 max-w-md">
+                            The bus is not currently running a journey. To see live tracking:
+                          </p>
+                          <div className="space-y-2 text-sm text-gray-600">
+                            <p>1. Go to Smart Transit page</p>
+                            <p>2. Select multiple destinations</p>
+                            <p>3. Click "Start Journey"</p>
+                          </div>
+                          <div className="mt-4 p-3 bg-gray-100 rounded-lg">
+                            <p className="text-xs text-gray-500">
+                              Last known location: {busData.currentLocation.locationName}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        )}
+
+        {/* Refresh Info */}
+        <div className="mt-8 text-center text-sm text-gray-500">
+          Dashboard updates automatically every 5 seconds
+        </div>
+      </div>
+    </div>
+  )
+}

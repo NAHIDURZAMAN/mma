@@ -16,9 +16,16 @@ import { fileURLToPath } from 'url'
 import { dirname } from 'path'
 import { sendJourneyCompleteEmail, sendLowBalanceAlert } from './Routes/emailService.js'
 import { forwardGeocode, reverseGeocode, calculateDistance, formatJourneyTime } from './Routes/geocodingService.js'
+import Stripe from 'stripe'
 
 // Load environment variables
 dotenv.config()
+
+// Initialize Stripe
+console.log('🔑 Stripe Secret Key loaded:', process.env.STRIPE_SECRET_KEY ? `${process.env.STRIPE_SECRET_KEY.substring(0, 12)}...${process.env.STRIPE_SECRET_KEY.slice(-4)}` : 'NOT FOUND')
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+  apiVersion: '2023-10-16',
+})
 
 const app = express()
 const server = createServer(app)
@@ -206,9 +213,35 @@ io.on('connection', (socket) => {
         location: currentBusLocation,
         timestamp: new Date().toISOString()
       })
+      
+      // Also broadcast vehicle position update for real-time tracking
+      socket.broadcast.emit('vehicle_position_update', {
+        lat: parseFloat(lat),
+        lng: parseFloat(lng),
+        address: address || `${lat}, ${lng}`,
+        busId,
+        timestamp: new Date().toISOString()
+      })
     } else {
       console.warn(`⚠️  Invalid GPS data received via WebSocket:`, data)
     }
+  })
+
+  // Handle simulation status updates from Smart Transit page
+  socket.on('simulation_status_update', (data) => {
+    console.log('🚌 Simulation status update received:', data)
+    
+    // Broadcast simulation status to all connected clients (including dashboard)
+    socket.broadcast.emit('simulation_status', {
+      isRunning: data.isRunning || false,
+      currentPosition: data.currentPosition || { lat: 23.8103, lng: 90.4125 },
+      destinations: data.destinations || [],
+      currentDestinationIndex: data.currentDestinationIndex || 0,
+      progress: data.progress || 0,
+      isWaitingAtStation: data.isWaitingAtStation || false,
+      vehicleType: data.vehicleType || 'bus',
+      timestamp: new Date().toISOString()
+    })
   })
   
   // Handle RFID simulation from frontend
@@ -625,6 +658,90 @@ app.get('/api/health', (req, res) => {
   })
 })
 
+// Authentication API Routes
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body
+    
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and password are required'
+      })
+    }
+    
+    const users = await supabaseRequest(`user_profile?email=eq.${email}&select=user_id,name,email,password,phone,balance`)
+    
+    if (users.length === 0) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password'
+      })
+    }
+    
+    const user = users[0]
+    
+    if (user.password !== password) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password'
+      })
+    }
+    
+    // Store user session
+    req.session.user = {
+      id: user.user_id,
+      name: user.name,
+      email: user.email
+    }
+    
+    // Return user data without password
+    const { password: _, ...userWithoutPassword } = user
+    
+    res.json({
+      success: true,
+      message: `Welcome back, ${user.name}!`,
+      user: userWithoutPassword
+    })
+    
+  } catch (error) {
+    console.error('Login API error:', error)
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error. Please try again.'
+    })
+  }
+})
+
+app.post('/api/auth/logout', (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      return res.status(500).json({
+        success: false,
+        message: 'Could not log out. Please try again.'
+      })
+    }
+    res.json({
+      success: true,
+      message: 'Logged out successfully'
+    })
+  })
+})
+
+app.get('/api/auth/me', (req, res) => {
+  if (req.session.user) {
+    res.json({
+      success: true,
+      user: req.session.user
+    })
+  } else {
+    res.status(401).json({
+      success: false,
+      message: 'Not authenticated'
+    })
+  }
+})
+
 // Enhanced RFID Card scan endpoint for Arduino ESP
 app.post('/api/rfid/scan', async (req, res) => {
   try {
@@ -756,6 +873,41 @@ app.get('/api/current-travel', async (req, res) => {
   } catch (error) {
     console.error('Current travel API error:', error)
     res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// Get current bus location
+app.get('/api/bus-location', (req, res) => {
+  try {
+    // Use reverse geocoding to get location name (simplified)
+    const locationNames = {
+      '23.8103,90.4125': 'City Terminal',
+      '23.7465,90.3765': 'Central Station',
+      '23.7589,90.3567': 'University Area',
+      '23.7456,90.3912': 'Shopping District'
+    }
+
+    const coordKey = `${currentVehiclePosition.lat.toFixed(4)},${currentVehiclePosition.lng.toFixed(4)}`
+    const locationName = locationNames[coordKey] || 'Moving'
+
+    res.json({
+      success: true,
+      latitude: currentVehiclePosition.lat,
+      longitude: currentVehiclePosition.lng,
+      locationName: locationName,
+      lastUpdated: new Date().toISOString(),
+      source: 'GPS_TRACKING'
+    })
+  } catch (error) {
+    console.error('Bus location API error:', error)
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      // Fallback location
+      latitude: 23.8103,
+      longitude: 90.4125,
+      locationName: 'City Terminal (Default)'
+    })
   }
 })
 
@@ -1306,6 +1458,181 @@ app.post('/api/admin/reset-travel-data', async (req, res) => {
       message: 'Failed to reset travel database',
       error: error.message
     })
+  }
+});
+
+// Stripe Payment Integration
+
+// Create Payment Intent for recharge
+app.post('/api/create-payment-intent', async (req, res) => {
+  try {
+    const { amount, currency = 'bdt', userId } = req.body;
+
+    if (!amount || amount < 5000) { // Minimum ৳50 (5000 paisa)
+      return res.status(400).json({
+        error: 'Minimum amount is ৳50'
+      });
+    }
+
+    if (!userId) {
+      return res.status(400).json({
+        error: 'User ID is required'
+      });
+    }
+
+    // Create a PaymentIntent with the order amount and currency
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amount, // Amount in paisa (smallest currency unit)
+      currency: currency,
+      metadata: {
+        userId: userId,
+        type: 'account_recharge'
+      },
+      automatic_payment_methods: {
+        enabled: true,
+      },
+    });
+
+    console.log(`💳 Payment intent created for user ${userId}: ${paymentIntent.id} - ৳${amount/100}`);
+
+    res.json({
+      clientSecret: paymentIntent.client_secret
+    });
+
+  } catch (error) {
+    console.error('Error creating payment intent:', error);
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
+
+// Update user balance after successful payment
+app.post('/api/update-balance', async (req, res) => {
+  try {
+    const { userId, amount, transactionId } = req.body;
+
+    if (!userId || !amount || !transactionId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields'
+      });
+    }
+
+    console.log(`💰 Updating balance for user ${userId}: +৳${amount} (Transaction: ${transactionId})`);
+
+    // First, get current user balance
+    const userResponse = await supabaseRequest(`user_profile?user_id=eq.${userId}&select=balance`);
+    
+    if (!userResponse || userResponse.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    const currentBalance = userResponse[0].balance || 0;
+    const newBalance = currentBalance + amount;
+
+    // Update user balance
+    const updateResponse = await supabaseRequest(`user_profile?user_id=eq.${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        balance: newBalance
+      })
+    });
+
+    // Record the recharge transaction
+    try {
+      await supabaseRequest('recharge_history', {
+        method: 'POST',
+        body: JSON.stringify({
+          user_id: userId,
+          amount: amount,
+          transaction_id: transactionId,
+          payment_method: 'stripe',
+          status: 'completed',
+          timestamp: new Date().toISOString()
+        })
+      });
+    } catch (historyError) {
+      console.log('Note: Could not save recharge history:', historyError.message);
+    }
+
+    console.log(`✅ Balance updated successfully: ${currentBalance} → ${newBalance}`);
+
+    // Emit balance update to user if they're connected
+    io.emit('balance_updated', {
+      userId: userId,
+      newBalance: newBalance,
+      rechargeAmount: amount,
+      transactionId: transactionId
+    });
+
+    res.json({
+      success: true,
+      newBalance: newBalance,
+      message: `৳${amount} added successfully`
+    });
+
+  } catch (error) {
+    console.error('Error updating balance:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Get user balance
+app.get('/api/user/balance/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const userResponse = await supabaseRequest(`user_profile?user_id=eq.${userId}&select=balance,name`);
+    
+    if (!userResponse || userResponse.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      balance: userResponse[0].balance || 0,
+      name: userResponse[0].name
+    });
+
+  } catch (error) {
+    console.error('Error fetching balance:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Get recharge history for user
+app.get('/api/user/recharge-history/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const limit = req.query.limit || 10;
+
+    const historyResponse = await supabaseRequest(`recharge_history?user_id=eq.${userId}&order=timestamp.desc&limit=${limit}`);
+    
+    res.json({
+      success: true,
+      history: historyResponse || []
+    });
+
+  } catch (error) {
+    console.error('Error fetching recharge history:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      history: []
+    });
   }
 });
 

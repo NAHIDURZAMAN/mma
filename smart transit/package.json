@@ -24,7 +24,10 @@
     "open": "^10.1.0",
     "oracledb": "^6.6.0",
     "postgres": "^3.4.4",
+    "side-channel": "^1.1.0",
+    "side-channel-list": "^1.0.0",
     "socket.io": "^4.8.1",
+    "stripe": "^18.5.0",
     "uuid": "^10.0.0"
   }
 }

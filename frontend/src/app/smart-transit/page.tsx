@@ -219,6 +219,22 @@ export default function SmartTransitSimulation() {
     }
   }, [currentPosition]);
 
+  // Send simulation status updates via Socket.IO
+  useEffect(() => {
+    if (wsRef.current && (wsRef.current as any).emit) {
+      (wsRef.current as any).emit('simulation_status_update', {
+        isRunning: simulation.isRunning,
+        currentPosition: currentPosition ? { lat: currentPosition[0], lng: currentPosition[1] } : { lat: 23.8103, lng: 90.4125 },
+        destinations: simulation.optimizedDestinations.length > 0 ? simulation.optimizedDestinations : destinations,
+        currentDestinationIndex: simulation.currentDestinationIndex,
+        progress: simulation.currentRouteProgress,
+        isWaitingAtStation: simulation.isWaitingAtStation,
+        vehicleType: simulation.vehicleType,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }, [simulation.isRunning, simulation.currentDestinationIndex, simulation.currentRouteProgress, simulation.isWaitingAtStation, currentPosition]);
+
   // Handle RFID card scan
   const handleRfidScan = useCallback((scanData: any) => {
     console.log('RFID scan received:', scanData);

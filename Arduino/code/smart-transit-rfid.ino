@@ -18,8 +18,8 @@ const char *ssid = "Tushar";
 const char *password = "12345678";
 
 // Server configuration
-const char *serverHost = "10.116.169.47"; // Updated server IP
-const int serverPort = 2000;
+const char *serverHost = "10.240.177.47"; // Updated server IP
+const int serverPort = 3000;
 const char *endpoint = "/api/rfid/scan";
 
 // Bus location data
