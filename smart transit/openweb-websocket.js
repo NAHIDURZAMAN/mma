@@ -14,8 +14,10 @@ import flash from 'connect-flash'
 import cors from 'cors'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
-import { sendJourneyCompleteEmail, sendLowBalanceAlert } from './Routes/emailService.js'
+import bonjour from 'bonjour'
+import { sendJourneyCompleteEmail, sendLowBalanceAlert, sendRechargeConfirmationEmail } from './Routes/emailService.js'
 import { forwardGeocode, reverseGeocode, calculateDistance, formatJourneyTime } from './Routes/geocodingService.js'
+import rechargeAPI from './Routes/rechargeHistoryAPI.js'
 import Stripe from 'stripe'
 
 // Load environment variables
@@ -901,16 +903,140 @@ app.post('/api/auth/logout', (req, res) => {
   })
 })
 
-app.get('/api/auth/me', (req, res) => {
-  if (req.session.user) {
+app.get('/api/auth/me', async (req, res) => {
+  try {
+    if (!req.session.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Not authenticated'
+      })
+    }
+    
+    // Fetch fresh user data from database to ensure balance is current
+    const users = await supabaseRequest(`user_profile?user_id=eq.${req.session.user.id}&select=*`)
+    
+    if (!users || users.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      })
+    }
+    
+    const user = users[0]
+    const { password, ...userWithoutPassword } = user
+    
+    // Update session with fresh data
+    req.session.user = {
+      id: user.user_id,
+      name: user.name,
+      email: user.email
+    }
+    
     res.json({
       success: true,
-      user: req.session.user
+      user: userWithoutPassword
     })
-  } else {
-    res.status(401).json({
+    
+  } catch (error) {
+    console.error('Auth check error:', error)
+    res.status(500).json({
       success: false,
-      message: 'Not authenticated'
+      message: 'Internal server error'
+    })
+  }
+})
+
+// Profile API endpoints
+app.get('/api/profile/:user_id', async (req, res) => {
+  try {
+    const { user_id } = req.params;
+    
+    // Get user profile
+    const users = await supabaseRequest(`user_profile?user_id=eq.${user_id}&select=*`)
+    
+    if (!users || users.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      })
+    }
+    
+    const user = users[0]
+    const { password, ...userWithoutPassword } = user
+    
+    res.json({
+      success: true,
+      user: userWithoutPassword
+    })
+    
+  } catch (error) {
+    console.error('Profile fetch error:', error)
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch profile'
+    })
+  }
+})
+
+app.put('/api/profile/:user_id', async (req, res) => {
+  try {
+    const { user_id } = req.params;
+    const { name, email, phone, address } = req.body;
+    
+    // Validate required fields
+    if (!name || !email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name and email are required'
+      })
+    }
+    
+    // Update user profile
+    const updateData = {
+      name,
+      email,
+      phone: phone || null,
+      address: address || null
+    }
+    
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/user_profile?user_id=eq.${user_id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Prefer': 'return=representation'
+      },
+      body: JSON.stringify(updateData)
+    })
+    
+    if (!response.ok) {
+      throw new Error(`Supabase error: ${response.status}`)
+    }
+    
+    const updatedUsers = await response.json()
+    
+    if (!updatedUsers || updatedUsers.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found or update failed'
+      })
+    }
+    
+    const updatedUser = updatedUsers[0]
+    const { password, ...userWithoutPassword } = updatedUser
+    
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      user: userWithoutPassword
+    })
+    
+  } catch (error) {
+    console.error('Profile update error:', error)
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update profile'
     })
   }
 })
@@ -2028,24 +2154,66 @@ app.post('/api/update-balance', async (req, res) => {
       })
     });
 
-    // Record the recharge transaction
+    // Record the recharge transaction using new recharge API
     try {
+      const mockReq = {
+        body: {
+          user_id: userId,
+          amount: amount,
+          payment_method: 'stripe',
+          transaction_id: transactionId
+        }
+      };
+      
+      const mockRes = {
+        json: (data) => {
+          if (data.success) {
+            console.log('✅ Recharge record saved via new API:', data.data.recharge_id);
+          } else {
+            console.log('❌ Failed to save recharge record:', data.message);
+          }
+        },
+        status: () => ({ json: () => {} })
+      };
+      
+      // Note: Don't await this to avoid changing balance twice
+      // The rechargeAPI.addRechargeRecord also updates balance, but we're handling it here
+      // So we'll just create a minimal record
       await supabaseRequest('recharge_history', {
         method: 'POST',
         body: JSON.stringify({
           user_id: userId,
-          amount: amount,
-          transaction_id: transactionId,
-          payment_method: 'stripe',
-          status: 'completed',
-          timestamp: new Date().toISOString()
+          recharge_amount: amount,
+          payment_method: 'stripe'
         })
       });
+      
+      console.log('✅ Recharge history record created');
     } catch (historyError) {
       console.log('Note: Could not save recharge history:', historyError.message);
     }
 
     console.log(`✅ Balance updated successfully: ${currentBalance} → ${newBalance}`);
+
+    // Get user details for email
+    const fullUserResponse = await supabaseRequest(`user_profile?user_id=eq.${userId}&select=*`);
+    const user = fullUserResponse[0];
+
+    // Send recharge confirmation email
+    if (user && user.email) {
+      try {
+        const rechargeData = {
+          amount: amount,
+          newBalance: newBalance,
+          transactionId: transactionId
+        };
+        
+        const emailResult = await sendRechargeConfirmationEmail(user, rechargeData);
+        console.log(`📧 Recharge email sent:`, emailResult.success ? '✅' : '❌', emailResult.messageId || emailResult.error);
+      } catch (emailError) {
+        console.log('⚠️ Failed to send recharge email:', emailError.message);
+      }
+    }
 
     // Emit balance update to user if they're connected
     io.emit('balance_updated', {
@@ -2099,25 +2267,169 @@ app.get('/api/user/balance/:userId', async (req, res) => {
   }
 });
 
-// Get recharge history for user
+// Get recharge history for user - Using existing Supabase REST API
 app.get('/api/user/recharge-history/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    const limit = req.query.limit || 10;
+    const limit = req.query.limit || 50;
+    const paymentMethod = req.query.payment_method;
+    
+    console.log(`📊 Fetching recharge history for user: ${userId}`);
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID is required'
+      });
+    }
+    
+    let query = `recharge_history?user_id=eq.${userId}&select=*`;
+    
+    // Add payment method filter if provided
+    if (paymentMethod && paymentMethod !== 'all') {
+      query += `&payment_method=eq.${paymentMethod}`;
+    }
+    
+    // Order by recharge_date or created_at
+    query += `&order=recharge_date.desc&limit=${limit}`;
 
-    const historyResponse = await supabaseRequest(`recharge_history?user_id=eq.${userId}&order=timestamp.desc&limit=${limit}`);
+    console.log(`🔍 Supabase query: ${query}`);
+
+    const historyResponse = await supabaseRequest(query);
+    
+    // Add status field if missing (for older records)
+    const enrichedHistory = (historyResponse || []).map(record => ({
+      ...record,
+      status: record.status || 'completed'
+    }));
+    
+    console.log(`✅ Found ${enrichedHistory.length} recharge records for user ${userId}`);
     
     res.json({
       success: true,
-      history: historyResponse || []
+      history: enrichedHistory,
+      count: enrichedHistory.length
     });
 
   } catch (error) {
-    console.error('Error fetching recharge history:', error);
+    console.error('❌ Error fetching recharge history:', error);
     res.status(500).json({
       success: false,
       error: error.message,
-      history: []
+      history: [],
+      count: 0
+    });
+  }
+});
+
+// Add recharge record - Using Supabase REST API
+app.post('/api/user/recharge', async (req, res) => {
+  try {
+    const { user_id, amount, payment_method, transaction_id } = req.body;
+    
+    console.log(`💰 Adding recharge record: ${user_id}, ৳${amount}, ${payment_method}`);
+    
+    if (!user_id || !amount || !payment_method) {
+      return res.status(400).json({
+        success: false,
+        message: 'user_id, amount, and payment_method are required'
+      });
+    }
+
+    if (isNaN(amount) || amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount must be a positive number'
+      });
+    }
+
+    // Insert recharge record using existing supabaseRequest
+    const rechargeResult = await supabaseRequest('recharge_history', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: user_id,
+        recharge_amount: parseFloat(amount),
+        payment_method: payment_method,
+        transaction_id: transaction_id || null
+      })
+    });
+    
+    console.log(`✅ Recharge record created successfully`);
+
+    // Update user balance
+    const userResult = await supabaseRequest(`user_profile?user_id=eq.${user_id}&select=balance`);
+    
+    if (!userResult || userResult.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    const currentBalance = userResult[0].balance || 0;
+    const newBalance = currentBalance + parseFloat(amount);
+
+    await supabaseRequest(`user_profile?user_id=eq.${user_id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ balance: newBalance })
+    });
+
+    console.log(`✅ User balance updated: ৳${currentBalance} → ৳${newBalance}`);
+
+    res.json({
+      success: true,
+      message: 'Recharge successful',
+      data: {
+        amount: parseFloat(amount),
+        payment_method: payment_method,
+        transaction_id: transaction_id || null,
+        previous_balance: currentBalance,
+        new_balance: newBalance
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error adding recharge record:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to add recharge record',
+      error: error.message
+    });
+  }
+});
+
+// Test database connection for recharge history
+app.get('/api/test/recharge-connection', async (req, res) => {
+  try {
+    console.log('🧪 Testing recharge history database connection...');
+    
+    // Test by getting count of recharge records
+    const countResult = await supabaseRequest('recharge_history?select=count');
+    const totalRecords = countResult[0]?.count || 0;
+    
+    // Test by getting recent records
+    const recentRecords = await supabaseRequest('recharge_history?select=user_id,recharge_amount,payment_method,recharge_date&order=recharge_date.desc&limit=5');
+    
+    console.log(`✅ Database connection test successful. Found ${totalRecords} records`);
+
+    res.json({
+      success: true,
+      message: 'Database connection test successful',
+      test_results: {
+        connection_status: 'OK',
+        total_records: totalRecords,
+        recent_records: recentRecords,
+        supabase_url: SUPABASE_URL ? 'Configured' : 'Not configured'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Database connection test failed:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Database connection test failed',
+      error: error.message,
+      connection_status: 'ERROR'
     });
   }
 });
@@ -2134,6 +2446,54 @@ app.use('*', (req, res) => {
 })
 
 // Initialize global route state
+// Alternative recharge history endpoint (for backward compatibility)
+app.get('/api/recharge-history', async (req, res) => {
+  try {
+    const { user_id, limit = 50 } = req.query;
+    
+    if (!user_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'user_id is required'
+      });
+    }
+    
+    // Use the new recharge API by calling it directly
+    req.params = { userId: user_id };
+    req.query = { limit };
+    
+    // Create a response wrapper to match old format
+    const mockRes = {
+      json: (data) => {
+        if (data.success && data.history) {
+          res.json({
+            success: true,
+            data: data.history,
+            count: data.count
+          });
+        } else {
+          res.json({
+            success: false,
+            message: data.message || 'Failed to fetch history',
+            data: []
+          });
+        }
+      },
+      status: (code) => ({ json: (data) => res.status(code).json(data) })
+    };
+    
+    await rechargeAPI.getRechargeHistory(req, mockRes);
+
+  } catch (error) {
+    console.error('Error fetching recharge history (compatibility endpoint):', error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+      data: []
+    });
+  }
+})
+
 global.currentRoute = {
   destinations: [],
   status: 'inactive',
@@ -2146,6 +2506,9 @@ global.currentRoute = {
 // Start the server
 const PORT = process.env.PORT || 2000
 
+// Initialize mDNS service
+const bonjourInstance = bonjour()
+
 server.listen(PORT, () => {
   console.log(`YOUR IP IS ${getWirelessIPAddress()}`)
   console.log(`Smart Transit server is running on port ${PORT}...`)
@@ -2156,4 +2519,21 @@ server.listen(PORT, () => {
   console.log(`🔌 WebSocket: ✅ Enabled`)
   console.log(`📱 Frontend: http://localhost:3000`)
   console.log(`🗺️  Route System: ✅ Initialized`)
+  
+  // Advertise the service via mDNS
+  const service = bonjourInstance.publish({
+    name: 'Smart Transit Server',
+    type: 'http',
+    port: PORT,
+    host: 'smarttransit.local'
+  })
+  
+  service.on('up', () => {
+    console.log(`🔍 mDNS: Service advertised as 'smarttransit.local:${PORT}'`)
+    console.log(`📡 ESP32 can now connect using: http://smarttransit.local:${PORT}`)
+  })
+  
+  service.on('error', (err) => {
+    console.error('❌ mDNS Error:', err.message)
+  })
 })

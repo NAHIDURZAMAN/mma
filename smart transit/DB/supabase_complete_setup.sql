@@ -1,8 +1,12 @@
 -- Complete Supabase Database Setup for Smart Transit Application
--- Execute this file in your Supabase SQL editor
+-- IMPORTANT: This must be executed in Supabase Dashboard > SQL Editor
 
--- Enable necessary extensions
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- STEP 1: Enable UUID extension in Supabase Dashboard
+-- Go to Database > Extensions > Search for "uuid-ossp" > Enable it
+-- OR run this command in Supabase SQL Editor:
+-- CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- STEP 2: After enabling the extension, run the rest of this script
 
 -- Drop existing tables and sequences if they exist (in reverse dependency order)
 DROP TABLE IF EXISTS CURRENT_TRAVEL CASCADE;
@@ -15,18 +19,9 @@ DROP SEQUENCE IF EXISTS user_id_seq CASCADE;
 -- Create sequence for user_id generation
 CREATE SEQUENCE user_id_seq START 1;
 
--- Create function to update the updated_at column
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.UPDATED_AT = CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$ language 'plpgsql';
-
 -- 1. USER_PROFILE table
 CREATE TABLE USER_PROFILE (
-    USER_ID VARCHAR(20) PRIMARY KEY DEFAULT ('U' || LPAD(nextval('user_id_seq')::TEXT, 6, '0')),
+    USER_ID VARCHAR(20) PRIMARY KEY,
     NAME VARCHAR(100) NOT NULL,
     EMAIL VARCHAR(100) UNIQUE NOT NULL,
     PHONE VARCHAR(20),
@@ -34,19 +29,11 @@ CREATE TABLE USER_PROFILE (
     BALANCE DECIMAL(10, 2) NOT NULL DEFAULT 0,
     DOB TIMESTAMP NOT NULL,
     PASSWORD VARCHAR(100) NOT NULL,
-    AGE INTEGER GENERATED ALWAYS AS (
-        EXTRACT(YEAR FROM AGE(CURRENT_DATE, DOB::DATE))
-    ) STORED,
+    AGE INTEGER,
     ADDRESS VARCHAR(200) NOT NULL,
-    CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UPDATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    CREATED_AT TIMESTAMP DEFAULT NOW(),
+    UPDATED_AT TIMESTAMP DEFAULT NOW()
 );
-
--- Create trigger to update updated_at on USER_PROFILE
-CREATE TRIGGER update_user_profile_updated_at 
-    BEFORE UPDATE ON USER_PROFILE
-    FOR EACH ROW 
-    EXECUTE FUNCTION update_updated_at_column();
 
 -- 2. BUS_INFO table
 CREATE TABLE BUS_INFO (
@@ -54,19 +41,13 @@ CREATE TABLE BUS_INFO (
     TOTAL_SEATS INTEGER DEFAULT 50,
     AVAILABLE_SEATS INTEGER DEFAULT 50,
     PER_KM_COST DECIMAL(10, 2) DEFAULT 5.00,
-    CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UPDATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    CREATED_AT TIMESTAMP DEFAULT NOW(),
+    UPDATED_AT TIMESTAMP DEFAULT NOW()
 );
-
--- Create trigger to update updated_at on BUS_INFO
-CREATE TRIGGER update_bus_info_updated_at 
-    BEFORE UPDATE ON BUS_INFO
-    FOR EACH ROW 
-    EXECUTE FUNCTION update_updated_at_column();
 
 -- 3. CURRENT_TRAVEL table
 CREATE TABLE CURRENT_TRAVEL (
-    TRAVEL_ID VARCHAR(400) PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    TRAVEL_ID UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     USER_ID VARCHAR(100) REFERENCES USER_PROFILE(USER_ID) ON DELETE CASCADE,
     PICK_POINT TEXT NOT NULL,
     DROP_POINT TEXT,
@@ -78,37 +59,33 @@ CREATE TABLE CURRENT_TRAVEL (
     DROPOFF_LATITUDE VARCHAR(100),
     TRAVEL_DATE DATE DEFAULT CURRENT_DATE,
     TRAVEL_STATUS VARCHAR(20) DEFAULT 'ONGOING' CHECK (TRAVEL_STATUS IN ('ONGOING', 'COMPLETED', 'CANCELLED')),
-    CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UPDATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    CREATED_AT TIMESTAMP DEFAULT NOW(),
+    UPDATED_AT TIMESTAMP DEFAULT NOW()
 );
-
--- Create trigger to update updated_at on CURRENT_TRAVEL
-CREATE TRIGGER update_current_travel_updated_at 
-    BEFORE UPDATE ON CURRENT_TRAVEL
-    FOR EACH ROW 
-    EXECUTE FUNCTION update_updated_at_column();
 
 -- 4. TRAVEL_HISTORY table
 CREATE TABLE TRAVEL_HISTORY (
-    HISTORY_ID VARCHAR(400) PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    HISTORY_ID UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     USER_ID VARCHAR(400) REFERENCES USER_PROFILE(USER_ID) ON DELETE CASCADE,
     TRAVEL_DATE DATE DEFAULT CURRENT_DATE,
-    TRAVEL_TIME TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    TRAVEL_TIME TIMESTAMP DEFAULT NOW(),
     PICK_POINT TEXT,
     DROP_POINT TEXT,
     TOTAL_COST DECIMAL(10, 2),
     REMAINING_BALANCE DECIMAL(10, 2),
-    CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    CREATED_AT TIMESTAMP DEFAULT NOW()
 );
 
 -- 5. RECHARGE_HISTORY table
 CREATE TABLE RECHARGE_HISTORY (
-    RECHARGE_ID VARCHAR(100) PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    RECHARGE_ID UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     USER_ID VARCHAR(100) REFERENCES USER_PROFILE(USER_ID) ON DELETE CASCADE,
-    RECHARGE_DATE TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    RECHARGE_DATE TIMESTAMP DEFAULT NOW(),
     RECHARGE_AMOUNT DECIMAL(10, 2) NOT NULL,
-    PAYMENT_METHOD VARCHAR(50) CHECK (PAYMENT_METHOD IN ('CARD', 'BKASH', 'NAGAD', 'ROCKET', 'UPAY')),
-    CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    PAYMENT_METHOD VARCHAR(50) CHECK (PAYMENT_METHOD IN ('CARD', 'BKASH', 'NAGAD', 'ROCKET', 'UPAY', 'STRIPE')),
+    TRANSACTION_ID VARCHAR(200),
+    STATUS VARCHAR(20) DEFAULT 'completed' CHECK (STATUS IN ('completed', 'pending', 'failed')),
+    CREATED_AT TIMESTAMP DEFAULT NOW()
 );
 
 -- Create indexes for better performance
@@ -122,14 +99,19 @@ CREATE INDEX idx_recharge_history_date ON RECHARGE_HISTORY(RECHARGE_DATE);
 CREATE INDEX idx_recharge_history_payment_method ON RECHARGE_HISTORY(PAYMENT_METHOD);
 
 -- Insert sample data
--- Sample users
+-- Admin users (with USER_ID starting with 'A' for admin identification)
+INSERT INTO USER_PROFILE (USER_ID, NAME, EMAIL, PHONE, CARD_ID, BALANCE, DOB, ADDRESS, PASSWORD)
+VALUES 
+    ('A000001', 'Super Admin', 'admin@smarttransit.com', '+1234567890', 'ADMIN001', 10000, '1990-01-01 00:00:00', 'Admin Office, Smart Transit HQ', 'admin123'),
+    ('A000002', 'John Doe Admin', 'john.doe@example.com', '+123456789', 'ADMIN002', 5000, '1996-04-12 10:00:00', '123 Street, City, Country', 'password123');
+
+-- Regular users
 INSERT INTO USER_PROFILE (NAME, EMAIL, PHONE, CARD_ID, BALANCE, DOB, ADDRESS, PASSWORD)
 VALUES 
-    ('John Doe', 'john.doe@example.com', '+123456789', '520028A3A0', 500, '1996-04-12 10:00:00', '123 Street, City, Country', 'hashed_password'),
-    ('Jane Smith', 'jane.smith@example.com', '+987654321', '520028B840', 1000, '1992-05-15 09:30:00', '456 Avenue, Town, Country', 'hashed_password'),
-    ('Mike Johnson', 'mike.johnson@example.com', '+1122334450', '520026D872', 750, '1998-02-22 08:15:00', '789 Boulevard, City, Country', 'hashed_password'),
-    ('Chris Johnson', 'chris.johnson@example.com', '+1122334460', '520028E289', 750, '1995-01-10 08:30:00', '789 Boulevard, City, Country', 'hashed_password'),
-    ('Alex Johnson', 'alex.johnson@example.com', '+1122334470', '4400309616', 750, '1997-03-05 10:15:00', '789 Boulevard, City, Country', 'hashed_password');
+    ('Jane Smith', 'jane.smith@example.com', '+987654321', '520028B840', 1000, '1992-05-15 09:30:00', '456 Avenue, Town, Country', 'password123'),
+    ('Mike Johnson', 'mike.johnson@example.com', '+1122334450', '520026D872', 750, '1998-02-22 08:15:00', '789 Boulevard, City, Country', 'password123'),
+    ('Chris Johnson', 'chris.johnson@example.com', '+1122334460', '520028E289', 750, '1995-01-10 08:30:00', '789 Boulevard, City, Country', 'password123'),
+    ('Alex Johnson', 'alex.johnson@example.com', '+1122334470', '4400309616', 750, '1997-03-05 10:15:00', '789 Boulevard, City, Country', 'password123');
 
 -- Sample bus data
 INSERT INTO BUS_INFO (BUS_ID) VALUES ('B1');

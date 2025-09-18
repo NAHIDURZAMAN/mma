@@ -1497,8 +1497,475 @@ export const sendLowBalanceAlert = async (user, currentBalance) => {
   }
 }
 
+// Send recharge confirmation email
+export const sendRechargeConfirmationEmail = async (user, rechargeData) => {
+  try {
+    const transporter = createTransporter()
+    
+    const rechargeTemplate = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Recharge Successful - Smart Transit</title>
+          <style>
+              @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+              
+              * {
+                  margin: 0;
+                  padding: 0;
+                  box-sizing: border-box;
+              }
+              
+              body {
+                  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                  line-height: 1.6;
+                  color: #1a1a1a;
+                  background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+                  min-height: 100vh;
+                  padding: 20px;
+              }
+              
+              .email-wrapper {
+                  max-width: 600px;
+                  margin: 0 auto;
+                  background: #ffffff;
+                  border-radius: 16px;
+                  overflow: hidden;
+                  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+              }
+              
+              .header {
+                  background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+                  padding: 40px 30px;
+                  text-align: center;
+                  color: white;
+                  position: relative;
+              }
+              
+              .header::before {
+                  content: '';
+                  position: absolute;
+                  top: 0;
+                  left: 0;
+                  right: 0;
+                  bottom: 0;
+                  background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M 10 0 L 0 0 0 10" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="0.5"/></pattern></defs><rect width="100" height="100" fill="url(%23grid)"/></svg>');
+                  opacity: 0.3;
+              }
+              
+              .success-icon {
+                  font-size: 48px;
+                  margin-bottom: 16px;
+                  position: relative;
+                  z-index: 1;
+                  animation: checkmark 1s ease-in-out;
+              }
+              
+              @keyframes checkmark {
+                  0% { transform: scale(0) rotate(0deg); }
+                  50% { transform: scale(1.2) rotate(180deg); }
+                  100% { transform: scale(1) rotate(360deg); }
+              }
+              
+              .header-title {
+                  font-size: 24px;
+                  font-weight: 600;
+                  margin-bottom: 8px;
+                  position: relative;
+                  z-index: 1;
+              }
+              
+              .header-subtitle {
+                  font-size: 16px;
+                  font-weight: 400;
+                  opacity: 0.9;
+                  position: relative;
+                  z-index: 1;
+              }
+              
+              .content {
+                  padding: 40px 30px;
+              }
+              
+              .success-badge {
+                  background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+                  color: white;
+                  padding: 12px 24px;
+                  border-radius: 50px;
+                  font-size: 14px;
+                  font-weight: 600;
+                  display: inline-flex;
+                  align-items: center;
+                  gap: 8px;
+                  margin-bottom: 24px;
+                  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+              }
+              
+              .greeting {
+                  font-size: 18px;
+                  font-weight: 500;
+                  margin-bottom: 16px;
+                  color: #2c3e50;
+              }
+              
+              .description {
+                  font-size: 16px;
+                  color: #666;
+                  margin-bottom: 32px;
+                  line-height: 1.6;
+              }
+              
+              .recharge-summary {
+                  background: linear-gradient(135deg, #e8f5e8 0%, #f1f8e9 100%);
+                  border: 1px solid #c8e6c9;
+                  border-radius: 16px;
+                  padding: 28px;
+                  margin: 24px 0;
+                  border-left: 6px solid #4CAF50;
+              }
+              
+              .summary-header {
+                  color: #2e7d32;
+                  font-size: 20px;
+                  font-weight: 600;
+                  margin-bottom: 20px;
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+              }
+              
+              .amount-display {
+                  background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+                  color: white;
+                  padding: 24px;
+                  border-radius: 16px;
+                  text-align: center;
+                  margin: 20px 0;
+                  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+              }
+              
+              .amount-label {
+                  font-size: 14px;
+                  opacity: 0.9;
+                  margin-bottom: 8px;
+              }
+              
+              .amount-value {
+                  font-size: 32px;
+                  font-weight: 700;
+                  margin-bottom: 8px;
+              }
+              
+              .amount-status {
+                  font-size: 14px;
+                  opacity: 0.8;
+              }
+              
+              .transaction-details {
+                  background: #f8f9fa;
+                  border: 1px solid #dee2e6;
+                  border-radius: 12px;
+                  padding: 20px;
+                  margin: 20px 0;
+              }
+              
+              .detail-row {
+                  display: flex;
+                  justify-content: space-between;
+                  align-items: center;
+                  padding: 12px 0;
+                  border-bottom: 1px solid #e9ecef;
+                  color: #2c3e50;
+              }
+              
+              .detail-row:last-child {
+                  border-bottom: none;
+              }
+              
+              .detail-label {
+                  font-weight: 500;
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+              }
+              
+              .detail-value {
+                  font-weight: 600;
+                  text-align: right;
+              }
+              
+              .new-balance-card {
+                  background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+                  color: white;
+                  padding: 28px;
+                  border-radius: 16px;
+                  text-align: center;
+                  margin: 24px 0;
+                  box-shadow: 0 4px 12px rgba(33, 150, 243, 0.3);
+              }
+              
+              .balance-header {
+                  font-size: 18px;
+                  font-weight: 600;
+                  margin-bottom: 16px;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  gap: 8px;
+              }
+              
+              .balance-amount {
+                  font-size: 36px;
+                  font-weight: 700;
+                  margin-bottom: 8px;
+              }
+              
+              .balance-message {
+                  font-size: 14px;
+                  opacity: 0.9;
+              }
+              
+              .benefits-section {
+                  background: linear-gradient(135deg, #fff8e1 0%, #fffde7 100%);
+                  border: 1px solid #ffcc02;
+                  border-radius: 16px;
+                  padding: 24px;
+                  margin: 24px 0;
+                  border-left: 6px solid #ff9800;
+              }
+              
+              .benefits-header {
+                  color: #e65100;
+                  font-size: 18px;
+                  font-weight: 600;
+                  margin-bottom: 16px;
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+              }
+              
+              .benefits-list {
+                  list-style: none;
+                  padding: 0;
+                  margin: 0;
+              }
+              
+              .benefit-item {
+                  color: #bf360c;
+                  margin-bottom: 12px;
+                  padding-left: 24px;
+                  position: relative;
+                  line-height: 1.5;
+              }
+              
+              .benefit-item::before {
+                  content: '🎯';
+                  position: absolute;
+                  left: 0;
+              }
+              
+              .footer {
+                  background: #f8f9fa;
+                  padding: 32px 30px;
+                  text-align: center;
+                  border-top: 1px solid #e9ecef;
+              }
+              
+              .footer-brand {
+                  font-size: 18px;
+                  font-weight: 700;
+                  color: #2c3e50;
+                  margin-bottom: 8px;
+              }
+              
+              .footer-tagline {
+                  font-size: 16px;
+                  color: #6c757d;
+                  margin-bottom: 8px;
+              }
+              
+              .footer-thanks {
+                  font-size: 16px;
+                  color: #2c3e50;
+                  font-weight: 500;
+                  margin-bottom: 16px;
+              }
+              
+              .footer-note {
+                  font-size: 12px;
+                  color: #adb5bd;
+                  line-height: 1.4;
+              }
+              
+              @media only screen and (max-width: 600px) {
+                  body {
+                      padding: 10px;
+                  }
+                  
+                  .content {
+                      padding: 24px 20px;
+                  }
+                  
+                  .header {
+                      padding: 24px 20px;
+                  }
+                  
+                  .footer {
+                      padding: 24px 20px;
+                  }
+                  
+                  .detail-row {
+                      flex-direction: column;
+                      align-items: flex-start;
+                      gap: 8px;
+                  }
+                  
+                  .detail-value {
+                      text-align: left;
+                  }
+                  
+                  .amount-value {
+                      font-size: 28px;
+                  }
+                  
+                  .balance-amount {
+                      font-size: 30px;
+                  }
+              }
+          </style>
+      </head>
+      <body>
+          <div class="email-wrapper">
+              <div class="header">
+                  <div class="success-icon">✅</div>
+                  <div class="header-title">Recharge Successful!</div>
+                  <div class="header-subtitle">Your account has been topped up</div>
+              </div>
+              
+              <div class="content">
+                  <div class="success-badge">
+                      <span>🎉</span>
+                      <span>PAYMENT PROCESSED</span>
+                  </div>
+                  
+                  <div class="greeting">Hello ${user.name}! 👋</div>
+                  
+                  <div class="description">
+                      Fantastic news! Your account recharge has been processed successfully. Your Smart Transit card is now ready for seamless journeys.
+                  </div>
+                  
+                  <div class="recharge-summary">
+                      <div class="summary-header">
+                          <span>💳</span>
+                          <span>Recharge Summary</span>
+                      </div>
+                      
+                      <div class="amount-display">
+                          <div class="amount-label">Amount Added</div>
+                          <div class="amount-value">৳${rechargeData.amount.toFixed(2)} BDT</div>
+                          <div class="amount-status">✅ Successfully credited to your account</div>
+                      </div>
+                      
+                      <div class="transaction-details">
+                          <div class="detail-row">
+                              <div class="detail-label">
+                                  <span>🏦</span>
+                                  <span>Payment Method</span>
+                              </div>
+                              <div class="detail-value">Stripe Payment Gateway</div>
+                          </div>
+                          
+                          <div class="detail-row">
+                              <div class="detail-label">
+                                  <span>🔗</span>
+                                  <span>Transaction ID</span>
+                              </div>
+                              <div class="detail-value">${rechargeData.transactionId || 'ST-' + Date.now()}</div>
+                          </div>
+                          
+                          <div class="detail-row">
+                              <div class="detail-label">
+                                  <span>📅</span>
+                                  <span>Date & Time</span>
+                              </div>
+                              <div class="detail-value">${new Date().toLocaleString('en-US', {
+                                  year: 'numeric',
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit'
+                              })}</div>
+                          </div>
+                          
+                          <div class="detail-row">
+                              <div class="detail-label">
+                                  <span>💳</span>
+                                  <span>Card ID</span>
+                              </div>
+                              <div class="detail-value">${user.card_id}</div>
+                          </div>
+                      </div>
+                  </div>
+                  
+                  <div class="new-balance-card">
+                      <div class="balance-header">
+                          <span>💰</span>
+                          <span>Updated Account Balance</span>
+                      </div>
+                      <div class="balance-amount">৳${rechargeData.newBalance.toFixed(2)} BDT</div>
+                      <div class="balance-message">🚀 Ready for your next journey!</div>
+                  </div>
+                  
+                  <div class="benefits-section">
+                      <div class="benefits-header">
+                          <span>🌟</span>
+                          <span>What's Next?</span>
+                      </div>
+                      <ul class="benefits-list">
+                          <li class="benefit-item">Start your journeys with confidence - sufficient balance available</li>
+                          <li class="benefit-item">Enjoy seamless travel across all Smart Transit routes</li>
+                          <li class="benefit-item">Track your balance and usage in real-time on our dashboard</li>
+                          <li class="benefit-item">Set up auto-recharge to never run out of balance again</li>
+                      </ul>
+                  </div>
+              </div>
+              
+              <div class="footer">
+                  <div class="footer-brand">Smart Transit System</div>
+                  <div class="footer-tagline">🌐 Making public transport smarter and more efficient</div>
+                  <div class="footer-thanks">🚀 Thank you for choosing Smart Transit!</div>
+                  <div class="footer-note">
+                      This is an automated confirmation. Please keep this email for your records.<br>
+                      © 2024 Smart Transit. All rights reserved.
+                  </div>
+              </div>
+          </div>
+      </body>
+      </html>
+    `
+    
+    const mailOptions = {
+      from: `"Smart Transit System" <${process.env.EMAIL_USER}>`,
+      to: user.email,
+      subject: `🎉 Recharge Successful - ৳${rechargeData.amount} Added`,
+      html: rechargeTemplate
+    }
+
+    const info = await transporter.sendMail(mailOptions)
+    console.log('Recharge confirmation email sent successfully:', info.messageId)
+    return { success: true, messageId: info.messageId }
+    
+  } catch (error) {
+    console.error('Error sending recharge confirmation email:', error)
+    return { success: false, error: error.message }
+  }
+}
+
 export default {
   sendJourneyStartEmail,
   sendJourneyCompleteEmail,
-  sendLowBalanceAlert
+  sendLowBalanceAlert,
+  sendRechargeConfirmationEmail
 }
