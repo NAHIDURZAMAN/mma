@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "openweb-websocket.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "openweb-websocket.js"
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  }
+}

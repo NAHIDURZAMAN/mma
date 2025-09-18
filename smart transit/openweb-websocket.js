@@ -31,8 +31,18 @@ const app = express()
 const server = createServer(app)
 const io = new Server(server, {
   cors: {
-    origin: ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"],
-    methods: ["GET", "POST"]
+    origin: [
+      "http://localhost:3000", 
+      "http://localhost:3001", 
+      "http://127.0.0.1:3000", 
+      "http://127.0.0.1:3001",
+      "https://*.vercel.app",
+      process.env.FRONTEND_URL,
+      /https:\/\/.*\.vercel\.app$/,
+      /https:\/\/.*\.railway\.app$/
+    ].filter(Boolean),
+    methods: ["GET", "POST"],
+    credentials: true
   }
 })
 
@@ -109,6 +119,25 @@ const passengersOnBus = new Map();
 
 // Store for RFID card scans (in memory - in production use database)
 let recentCardScans = new Map();
+
+// Cache for passenger count from database
+let cachedPassengerCount = 0;
+
+// Function to update passenger count cache from database
+async function updatePassengerCountCache() {
+  try {
+    const result = await supabaseRequest('current_travel?select=count');
+    cachedPassengerCount = result[0]?.count || 0;
+    console.log(`👥 Passenger count cache updated: ${cachedPassengerCount}`);
+  } catch (error) {
+    console.error('Error updating passenger count cache:', error);
+  }
+}
+
+// Update passenger count cache every 30 seconds
+setInterval(updatePassengerCountCache, 30000);
+// Initial update
+updatePassengerCountCache();
 const SCAN_DEBOUNCE_TIME = 3000; // 3 seconds
 
 // WebSocket connections storage
@@ -190,28 +219,59 @@ io.on('connection', (socket) => {
   })
   
   // Handle vehicle position updates from Smart Transit Simulation
-  socket.on('vehicle_position_update', (data) => {
-    const { lat, lng, address, busId = 'BUS001' } = data
+  socket.on('vehicle_position_update', async (data) => {
+    const { lat, lng, address, busId = 'BUS001', routeInfo } = data
     
     if (lat && lng) {
       console.log(`📡 WebSocket GPS Update Received: ${parseFloat(lat)}, ${parseFloat(lng)}`)
+      console.log(`🗺️  Route Info:`, routeInfo)
       
       // Update the vehicle position for RFID system
       updateVehiclePosition({ lat: parseFloat(lat), lng: parseFloat(lng) }, 'WEBSOCKET')
       
+      // Get reverse geocoded address if not provided
+      let locationAddress = address;
+      if (!address || address === `${lat}, ${lng}`) {
+        try {
+          locationAddress = await reverseGeocode(parseFloat(lat), parseFloat(lng));
+          console.log(`🗺️  Reverse geocoded address: ${locationAddress}`);
+        } catch (error) {
+          console.error('❌ Reverse geocoding failed:', error);
+          locationAddress = `${parseFloat(lat).toFixed(6)}, ${parseFloat(lng).toFixed(6)}`;
+        }
+      }
+      
       currentBusLocation = {
         lat: parseFloat(lat),
         lng: parseFloat(lng),
-        address: address || `${lat}, ${lng}`,
+        address: locationAddress,
         busId,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        // Enhanced with route information
+        routeInfo: routeInfo || null
       }
       
-      // Broadcast position update to all connected clients
+      // Broadcast enhanced position update to all connected clients
       socket.broadcast.emit('bus_location_update', {
         type: 'bus_location_update',
         location: currentBusLocation,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        routeDetails: routeInfo ? {
+          currentLocation: locationAddress,
+          nextDestination: routeInfo.nextDestination?.name || "Final Destination",
+          routeProgress: routeInfo.routeProgress || 0,
+          isWaitingAtStation: routeInfo.isWaitingAtStation || false,
+          passengers: cachedPassengerCount, // Use database count instead of simulation
+          vehicleType: routeInfo.vehicleType || 'bus',
+          destinationProgress: `${routeInfo.currentDestinationIndex + 1}/${routeInfo.totalDestinations}`,
+          completedStops: routeInfo.completedDestinations || 0
+        } : null
+      })
+      
+      console.log(`🚌 Broadcasting route update:`, {
+        location: address,
+        nextDestination: routeInfo?.nextDestination?.name || "Unknown",
+        progress: `${routeInfo?.routeProgress || 0}%`
       })
       
       // Also broadcast vehicle position update for real-time tracking
@@ -262,6 +322,75 @@ io.on('connection', (socket) => {
     } catch (error) {
       console.error('RFID simulation error:', error)
     }
+  })
+
+  // Handle route update from Smart Transit Simulation
+  socket.on('route_update', (data) => {
+    console.log('📍 Route update received from simulation:', data)
+    
+    // Store route information globally for monitor access
+    global.currentRoute = {
+      destinations: data.destinations || [],
+      status: data.status || 'planned',
+      totalDistance: data.totalDistance || 0,
+      currentDestinationIndex: data.currentDestinationIndex || 0,
+      lastUpdated: new Date().toISOString(),
+      vehiclePosition: data.vehiclePosition || null
+    }
+    
+    // Broadcast to all clients including monitor
+    io.emit('route_updated', {
+      route: global.currentRoute,
+      message: data.destinations?.length > 0 
+        ? `Route planned with ${data.destinations.length} destinations`
+        : 'Route cleared',
+      timestamp: new Date().toISOString()
+    })
+    
+    console.log(`🗺️  Route broadcasted to all clients:`, {
+      destinations: data.destinations?.length || 0,
+      status: data.status
+    })
+  })
+
+  // Handle route status updates from Smart Transit Simulation
+  socket.on('route_status_update', (data) => {
+    console.log('📊 Route status update received:', data)
+    
+    // Ensure we have a valid status
+    const validStatus = data.status || 'inactive'
+    
+    // Update global route status
+    if (global.currentRoute) {
+      global.currentRoute = {
+        ...global.currentRoute,
+        status: validStatus,
+        currentDestinationIndex: data.currentDestinationIndex !== undefined 
+          ? data.currentDestinationIndex 
+          : global.currentRoute.currentDestinationIndex,
+        vehiclePosition: data.vehiclePosition || global.currentRoute.vehiclePosition,
+        lastUpdated: new Date().toISOString()
+      }
+    } else {
+      global.currentRoute = {
+        destinations: [],
+        status: validStatus,
+        totalDistance: 0,
+        currentDestinationIndex: 0,
+        lastUpdated: new Date().toISOString(),
+        vehiclePosition: data.vehiclePosition || null
+      }
+    }
+    
+    // Broadcast status update to all clients
+    io.emit('route_status_changed', {
+      status: global.currentRoute.status,
+      currentDestinationIndex: global.currentRoute.currentDestinationIndex,
+      vehiclePosition: global.currentRoute.vehiclePosition,
+      timestamp: new Date().toISOString()
+    })
+    
+    console.log(`📡 Route status broadcasted:`, global.currentRoute.status)
   })
 })
 
@@ -326,10 +455,21 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
         
       } else {
         // Arduino sent default coords and we don't have better vehicle position
-        vehicleLat = providedLat
-        vehicleLng = providedLng
-        coordinateSource = 'SCAN_REQUEST_DEFAULT'
-        console.log(`⚠️ Using default GPS from ${deviceSource} scan: ${vehicleLat}, ${vehicleLng}`)
+        // For testing: Allow default coordinates with a warning
+        vehicleLat = DEFAULT_LAT
+        vehicleLng = DEFAULT_LNG
+        coordinateSource = 'DEFAULT_FALLBACK'
+        console.log(`⚠️  WARNING: Using default GPS coordinates from ${deviceSource}. Consider updating with real GPS data.`)
+        
+        // Optional: Still return error if you want to enforce real GPS
+        // console.log(`🚫 REJECTING default GPS coordinates from ${deviceSource}. Waiting for real GPS data...`)
+        // return {
+        //   success: false,
+        //   message: 'GPS coordinates required',
+        //   action: 'warning_beep',
+        //   display: ['GPS Required', 'Send Real Location'],
+        //   error: 'Default GPS coordinates not allowed. Please send real GPS coordinates or update vehicle position via WebSocket.'
+        // }
       }
       
     } else {
@@ -456,20 +596,44 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
         body: JSON.stringify({ balance: newBalance })
       })
       
+      // Get distinct drop-off location name
+      let dropOffLocationName = locationName;
+      
+      // If the drop-off location is too similar to pick-up location, make it more specific
+      if (dropOffLocationName === travel.pick_point || 
+          dropOffLocationName.toLowerCase().includes(travel.pick_point.toLowerCase()) ||
+          travel.pick_point.toLowerCase().includes(dropOffLocationName.toLowerCase())) {
+        
+        // Add coordinate-based suffix to make locations distinct
+        const dropCoordSuffix = `(${exitLat.toFixed(4)}, ${exitLng.toFixed(4)})`;
+        const pickCoordSuffix = `(${boardingLat.toFixed(4)}, ${boardingLng.toFixed(4)})`;
+        
+        dropOffLocationName = `${locationName} ${dropCoordSuffix}`;
+        
+        // Also update pick_point to be more specific if it's too generic
+        if (travel.pick_point === locationName) {
+          travel.pick_point = `${travel.pick_point} ${pickCoordSuffix}`;
+        }
+        
+        console.log(`📍 Location names were too similar, made them distinct:`);
+        console.log(`   Boarding: ${travel.pick_point}`);
+        console.log(`   Drop-off: ${dropOffLocationName}`);
+      }
+
       // Move to travel history
       await supabaseRequest('travel_history', {
         method: 'POST',
         body: JSON.stringify({
           user_id: user.user_id,
           pick_point: travel.pick_point,
-          drop_point: locationName,
+          drop_point: dropOffLocationName,
           total_cost: calculatedFare,
           remaining_balance: newBalance,
           travel_time: new Date().toISOString()
         })
       })
       
-      console.log(`Journey completed: ${user.name} traveled ${distance.toFixed(2)}km from ${travel.pick_point} to ${locationName}, fare: ৳${calculatedFare}`)
+      console.log(`Journey completed: ${user.name} traveled ${distance.toFixed(2)}km from ${travel.pick_point} to ${dropOffLocationName}, fare: ৳${calculatedFare}`)
       
       // Delete from current travel
       await supabaseRequest(`current_travel?user_id=eq.${user.user_id}`, {
@@ -486,7 +650,7 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
           
           const journeyData = {
             pick_point: travel.pick_point,
-            drop_point: locationName,
+            drop_point: dropOffLocationName,
             travel_time: new Date().toISOString()
           }
           
@@ -506,6 +670,9 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
         
         // Remove passenger from bus
         passengersOnBus.delete(actualCardId)
+        
+        // Update passenger count cache
+        updatePassengerCountCache();
         
         // Broadcast user update via WebSocket
         io.emit('user_update', {
@@ -530,7 +697,7 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
             fare_deducted: calculatedFare,
             distance: distance.toFixed(2),
             boarding_location: travel.pick_point,
-            exit_location: locationName,
+            exit_location: dropOffLocationName,
             boarding_coords: `${boardingLat}, ${boardingLng}`,
             exit_coords: `${exitLat}, ${exitLng}`
           }
@@ -540,11 +707,14 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
       // Start new travel - ORIGIN SCAN (using vehicle GPS position)
       console.log(`Journey started: Boarding at vehicle GPS (${vehicleLat}, ${vehicleLng}) - ${locationName}`)
       
+      // Make boarding location more descriptive by adding coordinate info and timestamp
+      const boardingLocationName = `${locationName} (Boarding: ${vehicleLat.toFixed(4)}, ${vehicleLng.toFixed(4)})`;
+      
       await supabaseRequest('current_travel', {
         method: 'POST',
         body: JSON.stringify({
           user_id: user.user_id,
-          pick_point: locationName,
+          pick_point: boardingLocationName,
           current_latitude: vehicleLat.toString(),
           current_longitude: vehicleLng.toString()
         })
@@ -557,7 +727,7 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
           card_id: actualCardId,
           balance: user.balance,
           boardTime: new Date().toISOString(),
-          boardLocation: locationName,
+          boardLocation: boardingLocationName,
           boardLatitude: vehicleLat,
           boardLongitude: vehicleLng,
           currentLatitude: vehicleLat,
@@ -569,9 +739,12 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
         io.emit('travel_update', {
           user_id: user.user_id,
           action: 'travel_start',
-          pick_point: locationName,
+          pick_point: boardingLocationName,
           coordinates: { latitude: vehicleLat, longitude: vehicleLng }
         })
+        
+        // Update passenger count cache
+        updatePassengerCountCache();
       
       return {
         success: true,
@@ -581,12 +754,12 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
         user: {
           name: user.name,
           balance: user.balance,
-          origin_location: locationName
+          origin_location: boardingLocationName
         },
         busLocation: {
           lat: vehicleLat,
           lng: vehicleLng,
-          address: locationName
+          address: boardingLocationName
         }
       }
     }
@@ -805,6 +978,316 @@ app.get('/api/users', async (req, res) => {
     res.json({ success: true, data: users, count: users.length })
   } catch (error) {
     res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// Monitor Dashboard API Endpoints
+app.get('/api/monitor/stats', async (req, res) => {
+  try {
+    console.log('📊 Monitor stats requested');
+    
+    // Get real-time statistics from database
+    const [totalUsers, activePassengers, todayRevenue, recentTravels] = await Promise.all([
+      // Total registered users
+      supabaseRequest('user_profile?select=count'),
+      
+      // Active passengers (current travels)
+      supabaseRequest('current_travel?select=count'),
+      
+      // Today's revenue from completed travels
+      supabaseRequest(`travel_history?select=total_cost&travel_time=gte.${new Date().toISOString().split('T')[0]}`),
+      
+      // Recent travel history for activity feed
+      supabaseRequest('travel_history?select=*,user_profile(name,card_id)&order=travel_time.desc&limit=10')
+    ]);
+
+    const totalRevenue = todayRevenue.reduce((sum, travel) => sum + (travel.total_cost || 0), 0);
+    const totalTrips = todayRevenue.length;
+
+    res.json({
+      success: true,
+      data: {
+        totalUsers: totalUsers[0]?.count || 0,
+        activePassengers: activePassengers[0]?.count || 0, // Read from database
+        currentPassengers: activePassengers[0]?.count || 0, // Read from database
+        totalRevenue: totalRevenue,
+        totalTrips: totalTrips,
+        recentActivity: recentTravels,
+        lastUpdated: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching monitor stats:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+})
+
+app.get('/api/monitor/passengers', async (req, res) => {
+  try {
+    console.log('👥 Current passengers requested from database');
+    
+    // Get current passengers directly from database instead of memory
+    const currentTravelsData = await supabaseRequest(
+      `current_travel?select=user_id,pick_point,current_longitude,current_latitude,created_at,user_profile!inner(name,email,card_id,balance,phone)&order=created_at.desc`
+    );
+    
+    // Map the database data to the expected format
+    const passengers = currentTravelsData.map(travel => ({
+      name: travel.user_profile.name,
+      email: travel.user_profile.email,
+      phone: travel.user_profile.phone || '',
+      cardId: travel.user_profile.card_id,
+      balance: travel.user_profile.balance,
+      user_id: travel.user_id,
+      boardTime: travel.created_at,
+      boardLocation: travel.pick_point,
+      currentLatitude: parseFloat(travel.current_latitude),
+      currentLongitude: parseFloat(travel.current_longitude),
+      coordinateSource: 'DATABASE'
+    }));
+
+    res.json({
+      success: true,
+      data: passengers,
+      count: passengers.length,
+      lastUpdated: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error fetching current passengers:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+})
+
+app.get('/api/monitor/location', async (req, res) => {
+  try {
+    console.log('📍 Bus location requested');
+    
+    // Get reverse geocoded address for current position if needed
+    let currentLocationName = currentBusLocation?.address || "Unknown Location";
+    if (currentVehiclePosition.lat && currentVehiclePosition.lng && 
+        (!currentLocationName || currentLocationName.includes(','))) {
+      try {
+        currentLocationName = await reverseGeocode(currentVehiclePosition.lat, currentVehiclePosition.lng);
+        console.log(`🗺️  Current location reverse geocoded: ${currentLocationName}`);
+      } catch (error) {
+        console.error('❌ Reverse geocoding failed for current location:', error);
+        currentLocationName = `${currentVehiclePosition.lat.toFixed(6)}, ${currentVehiclePosition.lng.toFixed(6)}`;
+      }
+    }
+    
+    // Get enhanced location data with route information
+    const locationData = {
+      currentLocation: {
+        ...currentBusLocation,
+        address: currentLocationName
+      },
+      vehiclePosition: currentVehiclePosition,
+      gpsStatus: {
+        hasRealGPS: !(currentVehiclePosition.lat === 23.8103 && currentVehiclePosition.lng === 90.4125),
+        source: currentVehiclePosition.lat === 23.8103 && currentVehiclePosition.lng === 90.4125 ? 'DEFAULT' : 'REAL_GPS',
+        lastUpdate: new Date().toISOString()
+      },
+      // Enhanced route information from Smart Transit Simulation
+      routeInfo: currentBusLocation.routeInfo || null,
+      navigationInfo: currentBusLocation.routeInfo ? {
+        currentLocationName: currentLocationName,
+        nextDestination: currentBusLocation.routeInfo.nextDestination?.name || "No destination set",
+        nextDestinationCoords: currentBusLocation.routeInfo.nextDestination ? {
+          lat: currentBusLocation.routeInfo.nextDestination.lat,
+          lng: currentBusLocation.routeInfo.nextDestination.lng
+        } : null,
+        routeProgress: currentBusLocation.routeInfo.routeProgress || 0,
+        isWaitingAtStation: currentBusLocation.routeInfo.isWaitingAtStation || false,
+        destinationIndex: `${(currentBusLocation.routeInfo.currentDestinationIndex || 0) + 1}/${currentBusLocation.routeInfo.totalDestinations || 1}`,
+        completedStops: currentBusLocation.routeInfo.completedDestinations || 0,
+        vehicleType: currentBusLocation.routeInfo.vehicleType || 'bus',
+        estimatedArrival: currentBusLocation.routeInfo.routeProgress > 0 ? 
+          `${Math.ceil((100 - currentBusLocation.routeInfo.routeProgress) / 10)} min` : 'Unknown'
+      } : {
+        currentLocationName: currentLocationName,
+        nextDestination: "No route selected",
+        nextDestinationCoords: null,
+        routeProgress: 0,
+        isWaitingAtStation: false,
+        destinationIndex: "0/0",
+        completedStops: 0,
+        vehicleType: 'bus',
+        estimatedArrival: 'Unknown'
+      }
+    };
+    
+    res.json({
+      success: true,
+      data: locationData
+    });
+  } catch (error) {
+    console.error('Error fetching bus location:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+})
+
+app.get('/api/monitor/recent-activity', async (req, res) => {
+  try {
+    console.log('📋 Recent activity requested');
+    const limit = parseInt(req.query.limit) || 20;
+    
+    // Get recent travel history with user details
+    const recentTravels = await supabaseRequest(
+      `travel_history?select=*,user_profile(name,card_id,email)&order=travel_time.desc&limit=${limit}`
+    );
+
+    // Also get current travels (ongoing)
+    const currentTravels = await supabaseRequest(
+      `current_travel?select=*,user_profile(name,card_id,email)&order=created_at.desc`
+    );
+
+    res.json({
+      success: true,
+      data: {
+        recentTravels,
+        currentTravels,
+        totalActivity: recentTravels.length + currentTravels.length
+      },
+      lastUpdated: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error fetching recent activity:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+})
+
+app.get('/api/monitor/revenue', async (req, res) => {
+  try {
+    console.log('💰 Revenue data requested');
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Get today's revenue breakdown
+    const [todayTravels, weeklyTravels, monthlyTravels] = await Promise.all([
+      supabaseRequest(`travel_history?select=total_cost,travel_time&travel_time=gte.${today}`),
+      supabaseRequest(`travel_history?select=total_cost,travel_time&travel_time=gte.${new Date(Date.now() - 7*24*60*60*1000).toISOString().split('T')[0]}`),
+      supabaseRequest(`travel_history?select=total_cost,travel_time&travel_time=gte.${new Date(Date.now() - 30*24*60*60*1000).toISOString().split('T')[0]}`)
+    ]);
+
+    const todayRevenue = todayTravels.reduce((sum, t) => sum + (t.total_cost || 0), 0);
+    const weeklyRevenue = weeklyTravels.reduce((sum, t) => sum + (t.total_cost || 0), 0);
+    const monthlyRevenue = monthlyTravels.reduce((sum, t) => sum + (t.total_cost || 0), 0);
+
+    res.json({
+      success: true,
+      data: {
+        today: {
+          revenue: todayRevenue,
+          trips: todayTravels.length
+        },
+        weekly: {
+          revenue: weeklyRevenue,
+          trips: weeklyTravels.length
+        },
+        monthly: {
+          revenue: monthlyRevenue,
+          trips: monthlyTravels.length
+        }
+      },
+      lastUpdated: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error fetching revenue data:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+})
+
+app.get('/api/monitor/system-health', async (req, res) => {
+  try {
+    console.log('🔧 System health requested');
+    
+    // Check database connectivity and get passenger count
+    let dbStatus = 'Unknown';
+    let dbLatency = 0;
+    let activePassengersCount = 0;
+    try {
+      const start = Date.now();
+      const [dbTest, passengerCount] = await Promise.all([
+        supabaseRequest('user_profile?select=count&limit=1'),
+        supabaseRequest('current_travel?select=count')
+      ]);
+      dbLatency = Date.now() - start;
+      dbStatus = 'Connected';
+      activePassengersCount = passengerCount[0]?.count || 0;
+    } catch (err) {
+      dbStatus = 'Error';
+    }
+
+    res.json({
+      success: true,
+      data: {
+        database: {
+          status: dbStatus,
+          latency: dbLatency
+        },
+        websocket: {
+          status: 'Active',
+          connectedClients: io.engine.clientsCount || 0
+        },
+        gps: {
+          status: currentVehiclePosition.lat === 23.8103 && currentVehiclePosition.lng === 90.4125 ? 'Default' : 'Real GPS',
+          coordinates: currentVehiclePosition
+        },
+        simulation: {
+          status: activePassengersCount > 0 ? 'Active' : 'Inactive',
+          activePassengers: activePassengersCount // Read from database
+        }
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error fetching system health:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+})
+
+// Get current route information for monitor
+app.get('/api/monitor/route', async (req, res) => {
+  try {
+    console.log('🗺️  Route information requested');
+    
+    // Get passenger count from database
+    const passengerCountResult = await supabaseRequest('current_travel?select=count');
+    const passengersOnBoard = passengerCountResult[0]?.count || 0;
+    
+    // Return current route information
+    const routeInfo = global.currentRoute || {
+      destinations: [],
+      status: 'inactive',
+      totalDistance: 0,
+      currentDestinationIndex: 0,
+      lastUpdated: new Date().toISOString(),
+      vehiclePosition: null
+    };
+
+    // Add current vehicle position
+    routeInfo.vehiclePosition = currentVehiclePosition;
+
+    // Calculate progress if route exists
+    let progress = 0;
+    if (routeInfo.destinations.length > 0 && routeInfo.currentDestinationIndex >= 0) {
+      progress = Math.round((routeInfo.currentDestinationIndex / routeInfo.destinations.length) * 100);
+    }
+
+    res.json({
+      success: true,
+      data: {
+        ...routeInfo,
+        progress,
+        hasActiveRoute: routeInfo.destinations.length > 0,
+        nextDestination: routeInfo.destinations[routeInfo.currentDestinationIndex] || null,
+        passengersOnBoard: passengersOnBoard, // Read from database
+        vehicleLocation: await reverseGeocode(currentVehiclePosition.lat, currentVehiclePosition.lng)
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error fetching route information:', error);
+    res.status(500).json({ success: false, message: error.message });
   }
 })
 
@@ -1141,7 +1624,7 @@ app.get('/api/gps/status', (req, res) => {
     is_using_default_coordinates: isDefaultCoords,
     coordinate_source: isDefaultCoords ? 'DEFAULT_FALLBACK' : 'REAL_GPS',
     last_updated: new Date().toISOString(),
-    passengers_on_bus: passengersOnBus.size,
+    passengers_on_bus: cachedPassengerCount, // Use database count instead of memory
     passengers: Array.from(passengersOnBus.entries()).map(([cardId, passenger]) => ({
       card_id: cardId,
       name: passenger.name,
@@ -1199,7 +1682,7 @@ app.get('/api/passengers', async (req, res) => {
     })
 
     res.json({
-      count: passengersOnBus.size,
+      count: cachedPassengerCount, // Use database count instead of memory
       passengers: passengers,
       busLocation: currentVehiclePosition, // Use current vehicle position
       currentBusPosition: currentVehiclePosition // Also provide as separate field
@@ -1433,6 +1916,9 @@ app.post('/api/admin/reset-travel-data', async (req, res) => {
     
     console.log('✅ Travel database reset completed (all data cleared)')
     
+    // Update passenger count cache after reset
+    updatePassengerCountCache();
+    
     // Broadcast reset event to all connected clients
     io.emit('travel_data_reset', {
       message: 'All travel data has been reset',
@@ -1445,7 +1931,7 @@ app.post('/api/admin/reset-travel-data', async (req, res) => {
       details: {
         currentTravelCleared: true,
         travelHistoryCleared: true,
-        passengersCleared: passengersOnBus.size === 0,
+        passengersCleared: cachedPassengerCount === 0, // Use database count
         recentScansCleared: recentCardScans.size === 0,
         vehiclePositionReset: true
       }
@@ -1647,6 +2133,16 @@ app.use('*', (req, res) => {
   res.status(404).render('error', { error: 'Page not found!' })
 })
 
+// Initialize global route state
+global.currentRoute = {
+  destinations: [],
+  status: 'inactive',
+  totalDistance: 0,
+  currentDestinationIndex: 0,
+  lastUpdated: new Date().toISOString(),
+  vehiclePosition: null
+}
+
 // Start the server
 const PORT = process.env.PORT || 2000
 
@@ -1659,4 +2155,5 @@ server.listen(PORT, () => {
   console.log(`🗄️  Database: ${SUPABASE_URL ? '✅ Supabase Connected' : '❌ Not configured'}`)
   console.log(`🔌 WebSocket: ✅ Enabled`)
   console.log(`📱 Frontend: http://localhost:3000`)
+  console.log(`🗺️  Route System: ✅ Initialized`)
 })

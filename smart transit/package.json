@@ -1,16 +1,16 @@
 {
   "type": "module",
   "scripts": {
-    "start": "node openweb.js",
+    "start": "node openweb-websocket.js",
     "start:websocket": "node openweb-websocket.js",
-    "dev": "node openweb.js",
+    "dev": "node openweb-websocket.js",
     "dev:websocket": "node openweb-websocket.js",
     "setup-db": "node create-tables.js",
     "test-db": "node test-db.js"
   },
   "dependencies": {
     "axios": "^1.11.0",
-    "cloudinary": "^2.5.0",
+    "cloudinary": "^1.41.0",
     "connect-flash": "^0.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -29,5 +29,8 @@
     "socket.io": "^4.8.1",
     "stripe": "^18.5.0",
     "uuid": "^10.0.0"
+  },
+  "overrides": {
+    "cloudinary": "^1.41.0"
   }
 }
