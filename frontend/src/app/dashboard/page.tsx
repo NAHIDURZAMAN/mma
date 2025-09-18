@@ -4,10 +4,10 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { MapPin, Users, Clock, Navigation, Wifi, WifiOff } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { MapPin, Users, Clock, Navigation, Wifi, WifiOff, Shield, AlertTriangle } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import { io } from 'socket.io-client'
-import RechargeCard from '@/components/RechargeCard'
 
 // Dynamically import map component to avoid SSR issues
 const MapComponent = dynamic(() => import('@/components/BusLocationMap'), {
@@ -48,6 +48,8 @@ export default function UserDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [socket, setSocket] = useState<any>(null)
+  const [cardBlocked, setCardBlocked] = useState(false)
+  const [blockLoading, setBlockLoading] = useState(false)
 
   // Handle balance updates from payment
   const handleBalanceUpdate = async () => {
@@ -55,6 +57,42 @@ export default function UserDashboard() {
       await refreshUser() // Refresh user data from AuthContext
     } catch (error) {
       console.error('Error refreshing user balance:', error)
+    }
+  }
+
+  // Handle card blocking
+  const handleBlockCard = async () => {
+    if (!confirm('Are you sure you want to block your card? This action will prevent all transactions until you contact support to unblock it.')) {
+      return
+    }
+
+    setBlockLoading(true)
+    try {
+      const response = await fetch('http://localhost:2000/api/block-card', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user?.user_id,
+          cardId: user?.card_id,
+        }),
+        credentials: 'include',
+      })
+
+      const data = await response.json()
+      
+      if (data.success) {
+        setCardBlocked(true)
+        alert('Your card has been blocked successfully. Contact customer support to unblock it.')
+      } else {
+        alert('Failed to block card: ' + data.message)
+      }
+    } catch (error) {
+      console.error('Error blocking card:', error)
+      alert('Failed to block card. Please try again or contact support.')
+    } finally {
+      setBlockLoading(false)
     }
   }
 
@@ -348,8 +386,70 @@ export default function UserDashboard() {
                 </CardContent>
               </Card>
 
-              {/* Recharge Card */}
-              <RechargeCard user={user} onBalanceUpdate={handleBalanceUpdate} />
+              {/* Block Card Section */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Shield className="h-5 w-5 text-red-600" />
+                    Card Security
+                  </CardTitle>
+                  <CardDescription>
+                    Block your card if it's lost or stolen
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                      <div>
+                        <p className="font-medium">Card Status</p>
+                        <p className="text-sm text-muted-foreground">
+                          {cardBlocked ? 'Your card is currently blocked' : 'Your card is active'}
+                        </p>
+                      </div>
+                      <Badge variant={cardBlocked ? 'destructive' : 'default'}>
+                        {cardBlocked ? 'BLOCKED' : 'ACTIVE'}
+                      </Badge>
+                    </div>
+                    
+                    {!cardBlocked ? (
+                      <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                        <div className="flex items-start space-x-3">
+                          <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5" />
+                          <div>
+                            <h4 className="font-medium text-red-900">Lost or Stolen Card?</h4>
+                            <p className="text-sm text-red-700 mb-3">
+                              Block your card immediately to prevent unauthorized use. You can contact support to unblock it later.
+                            </p>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={handleBlockCard}
+                              disabled={blockLoading}
+                            >
+                              {blockLoading ? 'Blocking...' : 'Block My Card'}
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                        <div className="flex items-start space-x-3">
+                          <Shield className="h-5 w-5 text-orange-600 mt-0.5" />
+                          <div>
+                            <h4 className="font-medium text-orange-900">Card Blocked</h4>
+                            <p className="text-sm text-orange-700 mb-3">
+                              Your card has been blocked for security. Contact customer support to unblock your card.
+                            </p>
+                            <Button variant="outline" size="sm">
+                              Contact Support
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
             </div>
 
             {/* Map Section */}

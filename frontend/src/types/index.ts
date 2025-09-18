@@ -6,6 +6,7 @@ export interface User {
   card_id: string;
   balance: number;
   created_at: string;
+  role?: 'admin' | 'user';
 }
 
 export interface Bus {

@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { CreditCard, Plus, DollarSign, CheckCircle, XCircle, Loader2 } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { useRouter } from 'next/navigation'
 
 // Load Stripe with publishable key
 const stripePromise = loadStripe('pk_test_51S8QamQ0Xqv5MH8v3BAILAy6h2cFuwwmpa8fDbwfvP0jQCds4Kewn3njdnaAsLtIesGrtO3ugvMbp0ASMH1CVNHx00NYvXf5SN')
@@ -28,6 +29,7 @@ const QUICK_AMOUNTS = [100, 200, 500, 1000, 2000]
 function RechargeForm({ user, onRechargeSuccess }: RechargeFormProps) {
   const stripe = useStripe()
   const elements = useElements()
+  const { refreshUser } = useAuth()
   const [amount, setAmount] = useState<number>(500)
   const [customAmount, setCustomAmount] = useState<string>('')
   const [isProcessing, setIsProcessing] = useState(false)
@@ -66,11 +68,12 @@ function RechargeForm({ user, onRechargeSuccess }: RechargeFormProps) {
 
     try {
       // Create payment intent on backend
-      const response = await fetch('/api/create-payment-intent', {
+      const response = await fetch('http://localhost:2000/api/create-payment-intent', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
           amount: amount * 100, // Convert to paisa (smallest currency unit)
           currency: 'bdt',
@@ -107,11 +110,12 @@ function RechargeForm({ user, onRechargeSuccess }: RechargeFormProps) {
 
       if (paymentIntent?.status === 'succeeded') {
         // Update user balance on backend
-        const updateResponse = await fetch('/api/update-balance', {
+        const updateResponse = await fetch('http://localhost:2000/api/update-balance', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
+          credentials: 'include',
           body: JSON.stringify({
             userId: user.user_id,
             amount: amount,
@@ -122,10 +126,12 @@ function RechargeForm({ user, onRechargeSuccess }: RechargeFormProps) {
         const updateResult = await updateResponse.json()
 
         if (updateResult.success) {
+          // Refresh user data to get updated balance
+          await refreshUser()
           setPaymentStatus('success')
           onRechargeSuccess(amount)
         } else {
-          throw new Error('Failed to update balance')
+          throw new Error(updateResult.message || 'Failed to update balance')
         }
       }
     } catch (error: any) {
@@ -284,6 +290,8 @@ interface RechargeCardProps {
 
 export default function RechargeCard({ user, onBalanceUpdate }: RechargeCardProps) {
   const [isOpen, setIsOpen] = useState(false)
+  const router = useRouter()
+  const { isAuthenticated } = useAuth()
 
   const handleRechargeSuccess = (amount: number) => {
     if (onBalanceUpdate) {
@@ -295,8 +303,29 @@ export default function RechargeCard({ user, onBalanceUpdate }: RechargeCardProp
     }, 3000)
   }
 
-  if (!user) {
-    return null
+  // Redirect to login if user is not authenticated
+  if (!isAuthenticated || !user) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <DollarSign className="h-5 w-5 text-green-600" />
+            Account Recharge
+          </CardTitle>
+          <CardDescription>
+            Please login to recharge your account
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="text-center py-8">
+            <p className="text-gray-600 mb-4">You need to be logged in to recharge your account.</p>
+            <Button onClick={() => router.push('/login')} className="bg-blue-600 hover:bg-blue-700">
+              Go to Login
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    )
   }
 
   return (

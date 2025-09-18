@@ -52,16 +52,27 @@ export default function LoginPage() {
     }
   };
 
+  // Admin users for easy admin access
+  const adminUsers = [
+    { email: 'admin@smarttransit.com', name: 'Super Admin', password: 'admin123' },
+    { email: 'john.doe@example.com', name: 'John Doe (Admin)', password: 'password123' }
+  ];
+
   // Demo users for easy testing
   const demoUsers = [
-    { email: 'john.doe@example.com', name: 'John Doe' },
     { email: 'jane.smith@example.com', name: 'Jane Smith' },
-    { email: 'mike.johnson@example.com', name: 'Mike Johnson' }
+    { email: 'mike.johnson@example.com', name: 'Mike Johnson' },
+    { email: 'chris.johnson@example.com', name: 'Chris Johnson' }
   ];
 
   const fillDemoUser = (userEmail: string) => {
     setEmail(userEmail);
     setPassword('password123'); // Demo password
+  };
+
+  const fillAdminUser = (userEmail: string, userPassword: string) => {
+    setEmail(userEmail);
+    setPassword(userPassword);
   };
 
   return (
@@ -77,6 +88,31 @@ export default function LoginPage() {
           <h1 className="text-3xl font-bold text-gray-900">Welcome Back</h1>
           <p className="text-gray-600">Sign in to your Smart Transit account</p>
         </div>
+
+        {/* Admin Users Section */}
+        <Card className="border-red-200 bg-red-50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-red-800">🔐 Admin Access</CardTitle>
+            <CardDescription className="text-xs">Click to auto-fill admin credentials</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {adminUsers.map((user, index) => (
+              <button
+                key={index}
+                onClick={() => fillAdminUser(user.email, user.password)}
+                className="w-full text-left p-2 rounded-md hover:bg-red-100 transition-colors border border-red-200"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{user.name}</p>
+                    <p className="text-xs text-gray-500">{user.email}</p>
+                  </div>
+                  <Badge variant="destructive" className="text-xs">ADMIN</Badge>
+                </div>
+              </button>
+            ))}
+          </CardContent>
+        </Card>
 
         {/* Demo Users Section */}
         <Card className="border-blue-200">

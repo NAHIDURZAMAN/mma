@@ -1,6 +1,7 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiClient.h>
+#include <ESP8266mDNS.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
@@ -18,8 +19,9 @@ const char *ssid = "Tushar";
 const char *password = "12345678";
 
 // Server configuration
-const char *serverHost = "10.240.177.47"; // Updated server IP
-const int serverPort = 3000;
+const char *serverHostname = "smarttransit.local"; // mDNS hostname
+String serverIP = "";                               // Will be resolved via mDNS
+const int serverPort = 2000;
 const char *endpoint = "/api/rfid/scan";
 
 // Bus location data
@@ -60,6 +62,7 @@ HTTPClient http;
 // Forward declarations
 void connectToWiFi();
 void initializeBusLocation();
+bool resolveMDNS();
 String extractCardID(String data);
 void handleCardRead(String cardID);
 void processValidCard(String cardID);
@@ -103,6 +106,12 @@ void setup()
 
     // Connect to WiFi
     connectToWiFi();
+
+    // Resolve server IP via mDNS
+    if (!resolveMDNS()) {
+        displayError("mDNS Failed", "Check server");
+        delay(3000);
+    }
 
     lcd.clear();
     lcd.setCursor(0, 0);
@@ -389,6 +398,72 @@ void connectToWiFi()
     }
 }
 
+bool resolveMDNS()
+{
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Finding Server");
+    lcd.setCursor(0, 1);
+    lcd.print("via mDNS...");
+
+    Serial.println("=== Starting mDNS Resolution ===");
+    
+    if (!MDNS.begin("esp32-rfid-scanner"))
+    {
+        Serial.println("Error setting up mDNS responder!");
+        return false;
+    }
+    
+    Serial.print("Resolving hostname: ");
+    Serial.println(serverHostname);
+
+    // Try to resolve the hostname
+    IPAddress serverAddr = MDNS.queryHost(serverHostname);
+    
+    if (serverAddr == INADDR_NONE)
+    {
+        Serial.println("mDNS resolution failed!");
+        
+        // Try a few more times
+        for (int i = 0; i < 3; i++)
+        {
+            delay(1000);
+            Serial.print("Retry ");
+            Serial.print(i + 1);
+            Serial.print("/3: ");
+            
+            serverAddr = MDNS.queryHost(serverHostname);
+            if (serverAddr != INADDR_NONE)
+            {
+                break;
+            }
+            Serial.println("Failed");
+        }
+    }
+    
+    if (serverAddr != INADDR_NONE)
+    {
+        serverIP = serverAddr.toString();
+        Serial.print("✅ Server found at IP: ");
+        Serial.println(serverIP);
+        
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Server Found!");
+        lcd.setCursor(0, 1);
+        lcd.print(serverIP);
+        delay(2000);
+        
+        return true;
+    }
+    else
+    {
+        Serial.println("❌ Failed to resolve server hostname");
+        serverIP = ""; // Clear any previous IP
+        return false;
+    }
+}
+
 void showTemporaryMessage(String line1, String line2)
 {
     lcd.clear();
@@ -415,10 +490,22 @@ void sendCardToServer(String cardID)
         return;
     }
 
+    // Check if we have a resolved server IP
+    if (serverIP == "")
+    {
+        Serial.println("No server IP resolved. Attempting mDNS resolution...");
+        if (!resolveMDNS())
+        {
+            displayError("Server Error", "Not found");
+            isProcessing = false;
+            return;
+        }
+    }
+
     // Mark the time when we actually send the request
     unsigned long sendTime = millis();
 
-    http.begin(wifiClient, serverHost, serverPort, endpoint);
+    http.begin(wifiClient, serverIP, serverPort, endpoint);
     http.addHeader("Content-Type", "application/json");
 
     // Create JSON payload with location data and unique timestamp
@@ -630,10 +717,17 @@ void displayError(String line1, String line2)
 // Function to get current passenger count from server
 void getBusStatusFromServer()
 {
+    // Check if we have a resolved server IP
+    if (serverIP == "")
+    {
+        Serial.println("No server IP for status update. Skipping...");
+        return;
+    }
+
     WiFiClient client;
     HTTPClient http;
 
-    http.begin(client, String("http://") + serverHost + ":" + String(serverPort) + "/api/current-travel");
+    http.begin(client, String("http://") + serverIP + ":" + String(serverPort) + "/api/current-travel");
     http.addHeader("Content-Type", "application/json");
 
     int httpResponseCode = http.GET();

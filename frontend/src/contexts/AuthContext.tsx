@@ -7,7 +7,10 @@ interface User {
   name: string;
   email: string;
   phone?: string;
+  card_id?: string;
   balance?: number;
+  created_at?: string;
+  role?: 'admin' | 'user';
 }
 
 interface AuthContextType {
