@@ -6,6 +6,7 @@
 #include <LiquidCrystal_I2C.h>
 #include <SoftwareSerial.h>
 #include <Servo.h>
+#include <ESP8266mDNS.h>
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 SoftwareSerial rdm6300(D5, D6); // RX, TX (TX unused)
@@ -17,10 +18,11 @@ const int buzzerPin = D8; // Buzzer pin
 const char *ssid = "Tushar";
 const char *password = "12345678";
 
-// Server configuration
-const char *serverHost = "10.56.227.47"; // Updated server IP
-const int serverPort = 3000;
+// Server configuration - mDNS only (no hardcoded IP)
+String serverHost = ""; // Will be discovered via mDNS
+const int serverPort = 2000; // Updated to match openweb-websocket.js
 const char *endpoint = "/api/rfid/scan";
+const char *mdnsHostname = "smarttransit"; // mDNS hostname to discover
 
 // Bus location data
 struct BusLocation
@@ -35,7 +37,9 @@ const int totalSeats = 40;       // Bus এর মোট আসন
 int currentPassengers = 0;       // বর্তমান যাত্রী সংখ্যা
 int availableSeats = totalSeats; // বাকি আসন
 unsigned long lastStatusUpdate = 0;
+unsigned long lastMdnsUpdate = 0; // Track mDNS rediscovery
 const unsigned long statusUpdateInterval = 5000; // 5 seconds
+const unsigned long mdnsUpdateInterval = 60000; // 60 seconds - rediscover server periodically
 
 // RFID scanning variables
 String rfidData = "";
@@ -59,6 +63,8 @@ HTTPClient http;
 
 // Forward declarations
 void connectToWiFi();
+bool discoverSmartTransitServer();
+bool testServerConnection();
 void initializeBusLocation();
 String extractCardID(String data);
 void handleCardRead(String cardID);
@@ -79,6 +85,117 @@ void initializeBusLocation()
     busLocation.latitude = 23.7465;
     busLocation.longitude = 90.3765;
     busLocation.locationName = "City Terminal";
+}
+
+// Discover Smart Transit Server using mDNS
+bool discoverSmartTransitServer()
+{
+    Serial.println("=== Starting mDNS Discovery ===");
+    
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Discovering...");
+    lcd.setCursor(0, 1);
+    lcd.print("Smart Transit");
+    
+    // Start mDNS
+    if (!MDNS.begin("esp8266-rfid")) {
+        Serial.println("Error setting up mDNS responder!");
+        return false;
+    }
+    Serial.println("mDNS responder started as 'esp8266-rfid.local'");
+    
+    // Query for HTTP services
+    Serial.println("Querying for HTTP services...");
+    
+    int n = MDNS.queryService("http", "tcp");
+    delay(1000); // Give mDNS time to complete
+    Serial.println("mDNS query done");
+    
+    if (n == 0) {
+        Serial.println("No HTTP services found via mDNS");
+        return false;
+    } 
+    else {
+        Serial.println(String(n) + " HTTP service(s) found");
+        
+        for (int i = 0; i < n; ++i) {
+            String serviceName = MDNS.hostname(i);
+            IPAddress serviceIP = MDNS.IP(i);
+            int servicePort = MDNS.port(i);
+            
+            Serial.println("Service " + String(i) + ": " + serviceName + ".local");
+            Serial.println("IP: " + serviceIP.toString());
+            Serial.println("Port: " + String(servicePort));
+            
+            // Check if this is our Smart Transit server
+            // Look for hostname containing "smarttransit" or port matching our server
+            if (serviceName.indexOf("smarttransit") >= 0 || 
+                serviceName.indexOf("Smart") >= 0 ||
+                serviceName.indexOf("transit") >= 0 ||
+                servicePort == serverPort) {
+                
+                serverHost = serviceIP.toString();
+                Serial.println("Found Smart Transit server: " + serverHost + ":" + String(servicePort));
+                
+                lcd.clear();
+                lcd.setCursor(0, 0);
+                lcd.print("Server Found!");
+                lcd.setCursor(0, 1);
+                lcd.print(serverHost);
+                delay(2000);
+                
+                return true;
+            }
+        }
+        
+        // If no exact match found, try the first service on our port
+        for (int i = 0; i < n; ++i) {
+            if (MDNS.port(i) == serverPort) {
+                serverHost = MDNS.IP(i).toString();
+                Serial.println("Using service on correct port: " + serverHost + ":" + String(serverPort));
+                
+                lcd.clear();
+                lcd.setCursor(0, 0);
+                lcd.print("Server Found!");
+                lcd.setCursor(0, 1);
+                lcd.print(serverHost);
+                delay(2000);
+                
+                return true;
+            }
+        }
+    }
+    
+    Serial.println("Smart Transit server not found via mDNS");
+    return false;
+}
+
+// Test server connection
+bool testServerConnection()
+{
+    WiFiClient client;
+    HTTPClient http;
+    
+    String testUrl = "http://" + serverHost + ":" + String(serverPort) + "/api/health";
+    
+    Serial.println("Testing server connection: " + testUrl);
+    
+    http.begin(client, testUrl);
+    http.setTimeout(5000); // 5 second timeout
+    
+    int httpResponseCode = http.GET();
+    bool isConnected = (httpResponseCode == 200);
+    
+    if (isConnected) {
+        String response = http.getString();
+        Serial.println("Server health check passed: " + response.substring(0, 100));
+    } else {
+        Serial.println("Server health check failed with code: " + String(httpResponseCode));
+    }
+    
+    http.end();
+    return isConnected;
 }
 
 void setup()
@@ -116,6 +233,12 @@ void setup()
     updateBusStatusDisplay();
 
     Serial.println("=== Smart Transit RFID Scanner Ready ===");
+    Serial.println("mDNS Integration: Enabled (IP-free)");
+    Serial.println("Target Service: smarttransit.local:" + String(serverPort));
+    Serial.println("Discovered Server: " + (serverHost.length() > 0 ? serverHost + ":" + String(serverPort) : "Not yet discovered"));
+    Serial.println("Device mDNS Name: esp8266-rfid.local");
+    Serial.println("No hardcoded IPs - fully dynamic discovery!");
+    Serial.println("==============================================");
 }
 
 void loop()
@@ -129,6 +252,35 @@ void loop()
     }
 
     unsigned long currentTime = millis();
+
+    // Periodic mDNS rediscovery (every 60 seconds)
+    if ((currentTime - lastMdnsUpdate) >= mdnsUpdateInterval)
+    {
+        lastMdnsUpdate = currentTime;
+        if (!isProcessing && !cardPresent)
+        {
+            Serial.println("Performing periodic mDNS rediscovery...");
+            String oldServerHost = serverHost;
+            bool mdnsSuccess = discoverSmartTransitServer();
+            if (mdnsSuccess)
+            {
+                if (serverHost != oldServerHost) {
+                    Serial.println("mDNS rediscovery found new server: " + serverHost);
+                } else {
+                    Serial.println("mDNS rediscovery confirmed current server: " + serverHost);
+                }
+            }
+            else
+            {
+                Serial.println("mDNS rediscovery failed - server may be offline");
+                if (serverHost == "") {
+                    Serial.println("No server available - retrying WiFi connection...");
+                    connectToWiFi();
+                    return;
+                }
+            }
+        }
+    }
 
     // Update bus status display periodically
     updateBusStatusDisplay();
@@ -378,6 +530,66 @@ void connectToWiFi()
         lcd.setCursor(0, 1);
         lcd.print(WiFi.localIP());
         delay(2000);
+        
+        // Try to discover server using mDNS (REQUIRED)
+        bool mdnsSuccess = discoverSmartTransitServer();
+        
+        if (mdnsSuccess) {
+            Serial.println("=== mDNS Discovery Successful ===");
+            Serial.println("Server: " + serverHost + ":" + String(serverPort));
+            
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("mDNS: Found!");
+            lcd.setCursor(0, 1);
+            lcd.print(serverHost);
+            delay(2000);
+            
+            // Test server connectivity
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("Testing Server");
+            lcd.setCursor(0, 1);
+            lcd.print("Connection...");
+            
+            bool serverOk = testServerConnection();
+            
+            if (serverOk) {
+                Serial.println("=== Server Connection Test: PASSED ===");
+                
+                lcd.clear();
+                lcd.setCursor(0, 0);
+                lcd.print("Server: Online");
+                lcd.setCursor(0, 1);
+                lcd.print("Ready to scan!");
+                delay(2000);
+            } else {
+                Serial.println("=== Server Connection Test: FAILED ===");
+                
+                lcd.clear();
+                lcd.setCursor(0, 0);
+                lcd.print("Server: Offline");
+                lcd.setCursor(0, 1);
+                lcd.print("Check network");
+                delay(3000);
+            }
+        } else {
+            Serial.println("=== mDNS Discovery Failed ===");
+            Serial.println("Cannot proceed without server discovery!");
+            
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("mDNS: FAILED");
+            lcd.setCursor(0, 1);
+            lcd.print("Check server!");
+            delay(5000);
+            
+            // Retry mDNS discovery
+            Serial.println("Retrying mDNS discovery in 5 seconds...");
+            delay(5000);
+            connectToWiFi(); // Recursive retry
+            return;
+        }
     }
     else
     {
@@ -417,10 +629,24 @@ void sendCardToServer(String cardID)
         return;
     }
 
+    // Check if we have a valid server discovered via mDNS
+    if (serverHost == "" || serverHost.length() == 0)
+    {
+        Serial.println("No server discovered via mDNS - attempting discovery...");
+        displayError("No Server", "Discovering...");
+        
+        bool mdnsSuccess = discoverSmartTransitServer();
+        if (!mdnsSuccess) {
+            displayError("Server Error", "mDNS Failed");
+            isProcessing = false;
+            return;
+        }
+    }
+
     // Mark the time when we actually send the request
     unsigned long sendTime = millis();
 
-    http.begin(wifiClient, serverHost, serverPort, endpoint);
+    http.begin(wifiClient, serverHost.c_str(), serverPort, endpoint);
     http.addHeader("Content-Type", "application/json");
 
     // Create JSON payload with location data and unique timestamp
@@ -632,6 +858,12 @@ void displayError(String line1, String line2)
 // Function to get current passenger count from server
 void getBusStatusFromServer()
 {
+    // Check if we have a valid server
+    if (serverHost == "" || serverHost.length() == 0) {
+        Serial.println("No server available for bus status update");
+        return;
+    }
+
     WiFiClient client;
     HTTPClient http;
 
@@ -661,6 +893,10 @@ void getBusStatusFromServer()
 
             Serial.println("Bus Status Updated - Passengers: " + String(currentPassengers) + ", Available: " + String(availableSeats));
         }
+    }
+    else
+    {
+        Serial.println("Failed to get bus status - HTTP Code: " + String(httpResponseCode));
     }
 
     http.end();
