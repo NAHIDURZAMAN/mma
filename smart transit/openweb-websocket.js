@@ -23,9 +23,17 @@ import Stripe from 'stripe'
 // Load environment variables
 dotenv.config()
 
+// Stripe configuration - Hardcoded keys
+// Note: These are TEST keys for development. For production:
+// 1. Use live keys (sk_live_... and pk_live_...)
+// 2. Consider using environment variables for security
+// 3. Never commit live keys to version control
+const STRIPE_SECRET_KEY = 'sk_test_51QEK5eJqwXDBmKmPl3eMqSMKLyDjxhwl1C3C6u8sJrKlNkCwSHw8NkJaQNtiBLKAcE9z1xCeOGTvC5CJvxLUQTek00Hd7aD6bZ'
+const STRIPE_PUBLISHABLE_KEY = 'pk_test_51QEK5eJqwXDBmKmPjHZJt7CKlKy2ygz4A1QlGH8Q3VbNcBgVfqWL6K9pF7t2E1K4T9xBfKd2J7l3H6rS5dW8c9x200sE9qJ4y2'
+
 // Initialize Stripe
-console.log('🔑 Stripe Secret Key loaded:', process.env.STRIPE_SECRET_KEY ? `${process.env.STRIPE_SECRET_KEY.substring(0, 12)}...${process.env.STRIPE_SECRET_KEY.slice(-4)}` : 'NOT FOUND')
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+console.log('🔑 Stripe Secret Key loaded:', STRIPE_SECRET_KEY ? `${STRIPE_SECRET_KEY.substring(0, 12)}...${STRIPE_SECRET_KEY.slice(-4)}` : 'NOT FOUND')
+const stripe = new Stripe(STRIPE_SECRET_KEY, {
   apiVersion: '2023-10-16',
 })
 
@@ -2263,6 +2271,22 @@ app.get('/api/user/balance/:userId', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message
+    });
+  }
+});
+
+// Get Stripe publishable key for frontend
+app.get('/api/stripe/config', (req, res) => {
+  try {
+    res.json({
+      success: true,
+      publishableKey: STRIPE_PUBLISHABLE_KEY
+    });
+  } catch (error) {
+    console.error('Error getting Stripe config:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get Stripe configuration'
     });
   }
 });
