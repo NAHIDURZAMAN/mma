@@ -50,6 +50,13 @@ export default function UserDashboard() {
   const [socket, setSocket] = useState<any>(null)
   const [cardBlocked, setCardBlocked] = useState(false)
   const [blockLoading, setBlockLoading] = useState(false)
+  const [cardStatus, setCardStatus] = useState<{
+    is_blocked: boolean
+    blocked_at: string | null
+    blocked_reason: string | null
+    blocked_by: string | null
+  } | null>(null)
+  const [blockReason, setBlockReason] = useState('')
 
   // Handle balance updates from payment
   const handleBalanceUpdate = async () => {
@@ -62,20 +69,26 @@ export default function UserDashboard() {
 
   // Handle card blocking
   const handleBlockCard = async () => {
+    if (!blockReason.trim()) {
+      alert('Please provide a reason for blocking your card.')
+      return
+    }
+
     if (!confirm('Are you sure you want to block your card? This action will prevent all transactions until you contact support to unblock it.')) {
       return
     }
 
     setBlockLoading(true)
     try {
-      const response = await fetch('http://localhost:2000/api/block-card', {
+      const response = await fetch('http://localhost:2000/api/cards/block', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           userId: user?.user_id,
-          cardId: user?.card_id,
+          reason: blockReason.trim(),
+          blockedBy: 'User Self-Service'
         }),
         credentials: 'include',
       })
@@ -84,15 +97,49 @@ export default function UserDashboard() {
       
       if (data.success) {
         setCardBlocked(true)
+        setBlockReason('')
+        await loadCardStatus() // Refresh card status
         alert('Your card has been blocked successfully. Contact customer support to unblock it.')
       } else {
-        alert('Failed to block card: ' + data.message)
+        alert('Failed to block card: ' + (data.message || 'Unknown error'))
       }
     } catch (error) {
       console.error('Error blocking card:', error)
       alert('Failed to block card. Please try again or contact support.')
     } finally {
       setBlockLoading(false)
+    }
+  }
+
+  // Load card status from backend
+  const loadCardStatus = async () => {
+    if (!user?.user_id) return
+
+    try {
+      const response = await fetch(`http://localhost:2000/api/users`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+      })
+
+      const data = await response.json()
+      
+      if (data.success && data.data) {
+        const currentUser = data.data.find((u: any) => u.user_id === user.user_id)
+        if (currentUser) {
+          setCardStatus({
+            is_blocked: currentUser.is_blocked || false,
+            blocked_at: currentUser.blocked_at,
+            blocked_reason: currentUser.blocked_reason,
+            blocked_by: currentUser.blocked_by
+          })
+          setCardBlocked(currentUser.is_blocked || false)
+        }
+      }
+    } catch (error) {
+      console.error('Error loading card status:', error)
     }
   }
 
@@ -124,6 +171,22 @@ export default function UserDashboard() {
       console.log('Balance updated:', data)
       if (data.userId === user?.user_id) {
         handleBalanceUpdate()
+      }
+    })
+
+    socketConnection.on('card_blocked', (data: any) => {
+      console.log('Card blocked:', data)
+      if (data.userId === user?.user_id) {
+        loadCardStatus() // Refresh card status
+        alert(`Your card has been blocked. Reason: ${data.reason}`)
+      }
+    })
+
+    socketConnection.on('card_unblocked', (data: any) => {
+      console.log('Card unblocked:', data)
+      if (data.userId === user?.user_id) {
+        loadCardStatus() // Refresh card status
+        alert('Your card has been unblocked and is now active.')
       }
     })
 
@@ -188,9 +251,13 @@ export default function UserDashboard() {
   useEffect(() => {
     if (isAuthenticated) {
       fetchBusData()
+      loadCardStatus() // Load card status when authenticated
       
       // Set up polling for real-time updates every 5 seconds
-      const interval = setInterval(fetchBusData, 5000)
+      const interval = setInterval(() => {
+        fetchBusData()
+        loadCardStatus() // Also refresh card status
+      }, 5000)
       
       return () => clearInterval(interval)
     }
@@ -386,7 +453,7 @@ export default function UserDashboard() {
                 </CardContent>
               </Card>
 
-              {/* Block Card Section */}
+              {/* Card Security Section */}
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
@@ -403,50 +470,105 @@ export default function UserDashboard() {
                       <div>
                         <p className="font-medium">Card Status</p>
                         <p className="text-sm text-muted-foreground">
-                          {cardBlocked ? 'Your card is currently blocked' : 'Your card is active'}
+                          {cardStatus?.is_blocked ? 'Your card is currently blocked' : 'Your card is active'}
                         </p>
+                        {cardStatus?.blocked_at && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            Blocked on: {new Date(cardStatus.blocked_at).toLocaleDateString()} at {new Date(cardStatus.blocked_at).toLocaleTimeString()}
+                          </p>
+                        )}
                       </div>
-                      <Badge variant={cardBlocked ? 'destructive' : 'default'}>
-                        {cardBlocked ? 'BLOCKED' : 'ACTIVE'}
+                      <Badge variant={cardStatus?.is_blocked ? 'destructive' : 'default'}>
+                        {cardStatus?.is_blocked ? 'BLOCKED' : 'ACTIVE'}
                       </Badge>
                     </div>
                     
-                    {!cardBlocked ? (
+                    {cardStatus?.is_blocked ? (
+                      <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                        <div className="flex items-start space-x-3">
+                          <Shield className="h-5 w-5 text-orange-600 mt-0.5" />
+                          <div>
+                            <h4 className="font-medium text-orange-900">Card Blocked</h4>
+                            <p className="text-sm text-orange-700 mb-2">
+                              Your card has been blocked for security reasons.
+                            </p>
+                            {cardStatus.blocked_reason && (
+                              <p className="text-sm text-orange-600 mb-2">
+                                <strong>Reason:</strong> {cardStatus.blocked_reason}
+                              </p>
+                            )}
+                            {cardStatus.blocked_by && (
+                              <p className="text-sm text-orange-600 mb-3">
+                                <strong>Blocked by:</strong> {cardStatus.blocked_by}
+                              </p>
+                            )}
+                            <div className="bg-orange-100 p-2 rounded text-sm text-orange-800">
+                              <strong>Note:</strong> Contact customer support to unblock your card. All transactions are currently disabled.
+                            </div>
+                            <div className="mt-3">
+                              <Button variant="outline" size="sm">
+                                Contact Support
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
                       <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
                         <div className="flex items-start space-x-3">
                           <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5" />
-                          <div>
+                          <div className="w-full">
                             <h4 className="font-medium text-red-900">Lost or Stolen Card?</h4>
                             <p className="text-sm text-red-700 mb-3">
                               Block your card immediately to prevent unauthorized use. You can contact support to unblock it later.
                             </p>
+                            
+                            <div className="mb-3">
+                              <label htmlFor="blockReason" className="block text-sm font-medium text-red-900 mb-1">
+                                Reason for blocking (required)
+                              </label>
+                              <select
+                                id="blockReason"
+                                value={blockReason}
+                                onChange={(e) => setBlockReason(e.target.value)}
+                                className="w-full p-2 border border-red-300 rounded-md text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                              >
+                                <option value="">Select a reason...</option>
+                                <option value="Card lost">Card lost</option>
+                                <option value="Card stolen">Card stolen</option>
+                                <option value="Suspicious activity">Suspicious activity</option>
+                                <option value="Unauthorized transactions">Unauthorized transactions</option>
+                                <option value="Other security concern">Other security concern</option>
+                              </select>
+                            </div>
+                            
                             <Button
                               variant="destructive"
                               size="sm"
                               onClick={handleBlockCard}
-                              disabled={blockLoading}
+                              disabled={blockLoading || !blockReason.trim()}
                             >
                               {blockLoading ? 'Blocking...' : 'Block My Card'}
                             </Button>
                           </div>
                         </div>
                       </div>
-                    ) : (
-                      <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
-                        <div className="flex items-start space-x-3">
-                          <Shield className="h-5 w-5 text-orange-600 mt-0.5" />
-                          <div>
-                            <h4 className="font-medium text-orange-900">Card Blocked</h4>
-                            <p className="text-sm text-orange-700 mb-3">
-                              Your card has been blocked for security. Contact customer support to unblock your card.
-                            </p>
-                            <Button variant="outline" size="sm">
-                              Contact Support
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
                     )}
+                    
+                    {/* Security Tips */}
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <h5 className="font-medium text-blue-900 mb-2 flex items-center gap-2">
+                        <Shield className="h-4 w-4" />
+                        Security Tips
+                      </h5>
+                      <ul className="text-sm text-blue-700 space-y-1">
+                        <li>• Keep your card in a secure wallet or card holder</li>
+                        <li>• Never share your card with others</li>
+                        <li>• Report lost or stolen cards immediately</li>
+                        <li>• Monitor your transaction history regularly</li>
+                        <li>• Contact support if you notice any suspicious activity</li>
+                      </ul>
+                    </div>
                   </div>
                 </CardContent>
               </Card>

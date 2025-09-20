@@ -124,10 +124,10 @@ export default function SmartTransitSimulation() {
   const [lastRfidScan, setLastRfidScan] = useState<any>(null);
 
   const [stats, setStats] = useState({
-    totalTrips: 127,
-    activeVehicles: 8,
-    avgEfficiency: 87,
-    dailyRevenue: 45600
+    totalTrips: 0,
+    activeVehicles: 0,
+    dailyRevenue: 0,
+    loading: true
   });
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -164,7 +164,7 @@ export default function SmartTransitSimulation() {
     }
   }, []);
 
-  // Setup WebSocket connection for RFID scanning
+  // Setup WebSocket connection for RFID scanning and real-time stats
   useEffect(() => {
     const connectWebSocket = () => {
       try {
@@ -172,14 +172,47 @@ export default function SmartTransitSimulation() {
         const socket = io('http://localhost:2000');
         
         socket.on('connect', () => {
-          console.log('Connected to RFID Socket.IO server');
+          console.log('Connected to Smart Transit Socket.IO server');
           setIsRfidConnected(true);
           wsRef.current = socket as any;
+          
+          // Request initial stats when connected
+          socket.emit('request_stats');
         });
 
         socket.on('rfid_scan', (data: any) => {
           console.log('RFID scan received via Socket.IO:', data);
           handleRfidScan(data);
+        });
+
+        // Listen for real-time stats updates
+        socket.on('stats_update', (statsData: any) => {
+          console.log('Real-time stats received:', statsData);
+          setStats({
+            totalTrips: statsData.totalTrips || 0,
+            activeVehicles: statsData.activeVehicles || statsData.activeUsers || 1,
+            dailyRevenue: statsData.dailyRevenue || statsData.totalRevenue || 0,
+            loading: false
+          });
+        });
+
+        // Listen for travel updates that affect stats
+        socket.on('travel_completed', (data: any) => {
+          console.log('Travel completed, updating stats');
+          // Request updated stats
+          socket.emit('request_stats');
+        });
+
+        // Listen for user creation that affects stats
+        socket.on('user_created', (data: any) => {
+          console.log('New user created, updating stats');
+          socket.emit('request_stats');
+        });
+
+        // Listen for balance updates that affect revenue
+        socket.on('balance_updated', (data: any) => {
+          console.log('Balance updated, requesting fresh stats');
+          socket.emit('request_stats');
         });
 
         socket.on('disconnect', () => {
@@ -625,19 +658,7 @@ export default function SmartTransitSimulation() {
     };
   }, []);
 
-  // Calculate fare and efficiency
-  const totalDistance = destinations.reduce((acc, dest, index) => {
-    if (index === 0 && userLocation) {
-      return acc + calculateDistance(userLocation[0], userLocation[1], dest.lat, dest.lng);
-    } else if (index > 0) {
-      const prevDest = destinations[index - 1];
-      return acc + calculateDistance(prevDest.lat, prevDest.lng, dest.lat, dest.lng);
-    }
-    return acc;
-  }, 0);
 
-  const estimatedFare = totalDistance * currentVehicle.costPerKm;
-  const efficiencyColor = simulation.efficiency > 85 ? 'text-green-600' : simulation.efficiency > 70 ? 'text-yellow-600' : 'text-red-600';
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-6">
@@ -654,13 +675,19 @@ export default function SmartTransitSimulation() {
         </div>
 
         {/* Quick Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <Card className="bg-gradient-to-br from-blue-500 to-blue-600 text-white border-0 shadow-lg">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-blue-100 text-sm">Total Trips</p>
-                  <p className="text-2xl font-bold">{stats.totalTrips}</p>
+                  <p className="text-2xl font-bold">
+                    {stats.loading ? (
+                      <span className="animate-pulse">---</span>
+                    ) : (
+                      stats.totalTrips.toLocaleString()
+                    )}
+                  </p>
                 </div>
                 <Route className="h-8 w-8 text-blue-200" />
               </div>
@@ -672,21 +699,15 @@ export default function SmartTransitSimulation() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-green-100 text-sm">Active Vehicles</p>
-                  <p className="text-2xl font-bold">{stats.activeVehicles}</p>
+                  <p className="text-2xl font-bold">
+                    {stats.loading ? (
+                      <span className="animate-pulse">---</span>
+                    ) : (
+                      stats.activeVehicles
+                    )}
+                  </p>
                 </div>
                 <Bus className="h-8 w-8 text-green-200" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-gradient-to-br from-purple-500 to-purple-600 text-white border-0 shadow-lg">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-purple-100 text-sm">Efficiency</p>
-                  <p className="text-2xl font-bold">{stats.avgEfficiency}%</p>
-                </div>
-                <TrendingUp className="h-8 w-8 text-purple-200" />
               </div>
             </CardContent>
           </Card>
@@ -696,7 +717,13 @@ export default function SmartTransitSimulation() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-orange-100 text-sm">Revenue (Today)</p>
-                  <p className="text-2xl font-bold">৳{stats.dailyRevenue.toLocaleString()}</p>
+                  <p className="text-2xl font-bold">
+                    {stats.loading ? (
+                      <span className="animate-pulse">---</span>
+                    ) : (
+                      `৳${stats.dailyRevenue.toLocaleString()}`
+                    )}
+                  </p>
                 </div>
                 <Zap className="h-8 w-8 text-orange-200" />
               </div>
@@ -831,16 +858,7 @@ export default function SmartTransitSimulation() {
                       </Button>
                     )}
 
-                    <div className="p-3 bg-gray-50 rounded-lg">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">Total Distance:</span>
-                        <span className="font-medium">{totalDistance.toFixed(1)} km</span>
-                      </div>
-                      <div className="flex justify-between text-sm mt-1">
-                        <span className="text-gray-600">Estimated Fare:</span>
-                        <span className="font-medium">৳{estimatedFare.toFixed(0)}</span>
-                      </div>
-                    </div>
+
                   </>
                 )}
               </CardContent>
@@ -962,66 +980,7 @@ export default function SmartTransitSimulation() {
               </CardContent>
             </Card>
 
-            {/* Real-time Journey Stats */}
-            {simulation.isRunning && (
-              <Card className="shadow-lg border-0 bg-gradient-to-br from-indigo-500 to-purple-600 text-white">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <Target className="h-5 w-5" />
-                    Live Journey Data
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-indigo-100 text-sm">Current Destination</p>
-                      <p className="font-semibold">
-                        {(simulation.isRunning ? simulation.optimizedDestinations : destinations)[simulation.currentDestinationIndex]?.name || 
-                         (simulation.isRunning ? simulation.optimizedDestinations : destinations)[simulation.currentDestinationIndex]?.address || 
-                         'Destination ' + (simulation.currentDestinationIndex + 1)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-indigo-100 text-sm">Next Stop</p>
-                      <p className="font-semibold">{realTimeData.nextStop}</p>
-                    </div>
-                    <div>
-                      <p className="text-indigo-100 text-sm">ETA</p>
-                      <p className="font-semibold">{realTimeData.eta}</p>
-                    </div>
-                    <div>
-                      <p className="text-indigo-100 text-sm">Passengers</p>
-                      <p className="font-semibold">{Math.max(0, Math.min(simulation.passengers, currentVehicle.capacity))}</p>
-                    </div>
-                    <div>
-                      <p className="text-indigo-100 text-sm">Distance Covered</p>
-                      <p className="font-semibold">{simulation.totalDistance.toFixed(1)} km</p>
-                    </div>
-                    <div>
-                      <p className="text-indigo-100 text-sm">Current Fare</p>
-                      <p className="font-semibold">৳{(simulation.totalDistance * currentVehicle.costPerKm).toFixed(0)}</p>
-                    </div>
-                    <div>
-                      <p className="text-indigo-100 text-sm">Completed</p>
-                      <p className="font-semibold">{simulation.completedDestinations.length} of {simulation.isRunning ? simulation.optimizedDestinations.length : destinations.length}</p>
-                    </div>
-                    <div>
-                      <p className="text-indigo-100 text-sm">Remaining</p>
-                      <p className="font-semibold">{realTimeData.remainingDistance.toFixed(1)} km</p>
-                    </div>
-                  </div>
-                  
-                  <div className="pt-2 border-t border-indigo-400">
-                    <div className="flex justify-between items-center">
-                      <span className="text-indigo-100 text-sm">Vehicle Efficiency</span>
-                      <span className={`font-bold ${efficiencyColor.replace('text-', 'text-white')}`}>
-                        {simulation.efficiency}%
-                      </span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+
 
             {/* RFID Scanner */}
             <RfidScanner 

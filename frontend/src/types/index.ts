@@ -4,9 +4,18 @@ export interface User {
   email: string;
   phone?: string;
   card_id: string;
+  card_type?: 'student' | 'senior' | 'disabled' | 'child' | 'regular';
   balance: number;
   created_at: string;
   role?: 'admin' | 'user';
+  // Card blocking fields
+  is_blocked?: boolean | number; // Support both boolean and number formats
+  blocked_at?: string;
+  blocked_reason?: string;
+  blocked_by?: string;
+  unblocked_at?: string;
+  unblocked_by?: string;
+  unblock_reason?: string;
 }
 
 export interface Bus {

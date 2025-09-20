@@ -27,7 +27,7 @@ const navigation = [
   { name: 'User Dashboard', href: '/dashboard', icon: MapPin },
   { name: 'Users', href: '/users', icon: Users },
   { name: 'Monitor', href: '/monitor', icon: Activity },
-  { name: 'RFID Simulator', href: '/simulator', icon: CreditCard },
+  { name: 'User Creator', href: '/simulator', icon: CreditCard },
   { name: 'Smart Transit', href: '/smart-transit', icon: NavigationIcon },
 ];
 

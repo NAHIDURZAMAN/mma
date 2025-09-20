@@ -29,7 +29,7 @@ const adminNavigation = [
   { name: 'Admin Dashboard', href: '/', icon: Home },
   { name: 'User Management', href: '/users', icon: Users },
   { name: 'System Monitor', href: '/monitor', icon: Activity },
-  { name: 'RFID Simulator', href: '/simulator', icon: CreditCard },
+  { name: 'User Creator', href: '/simulator', icon: CreditCard },
   { name: 'Smart Transit', href: '/smart-transit', icon: NavigationIcon },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },
   { name: 'Database', href: '/database', icon: Database },

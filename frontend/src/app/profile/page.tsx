@@ -19,7 +19,10 @@ import {
   History,
   Shield,
   AlertCircle,
-  CheckCircle
+  CheckCircle,
+  Lock,
+  Unlock,
+  ShieldAlert
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
@@ -45,6 +48,13 @@ export default function ProfilePage() {
     lastTrip: null,
     accountAge: 0
   });
+
+  // Card blocking states
+  const [showBlockDialog, setShowBlockDialog] = useState(false);
+  const [showUnblockDialog, setShowUnblockDialog] = useState(false);
+  const [blockReason, setBlockReason] = useState('');
+  const [blockingCard, setBlockingCard] = useState(false);
+  const [unblockReason, setUnblockReason] = useState('');
 
   const handleEdit = () => {
     setEditing(true);
@@ -171,6 +181,95 @@ export default function ProfilePage() {
     } finally {
       setRefreshing(false);
     }
+  };
+
+  // Card blocking functions
+  const handleBlockCard = async () => {
+    if (!blockReason.trim()) {
+      setError('Please provide a reason for blocking the card');
+      return;
+    }
+
+    setBlockingCard(true);
+    setError(null);
+    
+    try {
+      const response = await fetch(`http://localhost:2000/api/cards/block`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user?.user_id,
+          reason: blockReason,
+          blockedBy: `User Self-Service (${user?.name})`
+        }),
+        credentials: 'include'
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        setShowBlockDialog(false);
+        setBlockReason('');
+        await handleRefresh(); // Refresh to get updated status
+        alert('Card has been blocked successfully. You will receive an email notification.');
+      } else {
+        setError(data.message || 'Failed to block card');
+      }
+    } catch (error) {
+      console.error('Failed to block card:', error);
+      setError('Network error. Please try again.');
+    } finally {
+      setBlockingCard(false);
+    }
+  };
+
+  const handleUnblockCard = async () => {
+    if (!unblockReason.trim()) {
+      setError('Please provide a reason for unblocking the card');
+      return;
+    }
+
+    setBlockingCard(true);
+    setError(null);
+    
+    try {
+      const response = await fetch(`http://localhost:2000/api/cards/unblock`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user?.user_id,
+          reason: unblockReason,
+          unblockedBy: `User Self-Service (${user?.name})`
+        }),
+        credentials: 'include'
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        setShowUnblockDialog(false);
+        setUnblockReason('');
+        await handleRefresh(); // Refresh to get updated status
+        alert('Card has been unblocked successfully. You will receive an email notification.');
+      } else {
+        setError(data.message || 'Failed to unblock card');
+      }
+    } catch (error) {
+      console.error('Failed to unblock card:', error);
+      setError('Network error. Please try again.');
+    } finally {
+      setBlockingCard(false);
+    }
+  };
+
+  const isCardBlocked = () => {
+    if (fullProfile?.is_blocked === true || fullProfile?.is_blocked === 1) return true;
+    if (fullProfile?.is_blocked === false || fullProfile?.is_blocked === 0) return false;
+    return false;
   };
 
   // Load data on component mount and user change
@@ -364,9 +463,21 @@ export default function ProfilePage() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Account Status</span>
-                <Badge variant="default" className="bg-green-100 text-green-800">
-                  <CheckCircle className="h-3 w-3 mr-1" />
-                  Active
+                <Badge 
+                  variant={isCardBlocked() ? "destructive" : "default"} 
+                  className={isCardBlocked() ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"}
+                >
+                  {isCardBlocked() ? (
+                    <>
+                      <ShieldAlert className="h-3 w-3 mr-1" />
+                      Blocked
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="h-3 w-3 mr-1" />
+                      Active
+                    </>
+                  )}
                 </Badge>
               </div>
               <div className="flex items-center justify-between">
@@ -380,6 +491,22 @@ export default function ProfilePage() {
                   <span className="text-sm text-muted-foreground">Account Age</span>
                   <span className="text-sm">{stats.accountAge} days</span>
                 </div>
+              )}
+
+              {/* Card blocking status */}
+              {isCardBlocked() && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Blocked At</span>
+                    <span className="text-sm">
+                      {fullProfile?.blocked_at ? new Date(fullProfile.blocked_at).toLocaleDateString() : 'N/A'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Blocked Reason</span>
+                    <span className="text-sm">{fullProfile?.blocked_reason || 'N/A'}</span>
+                  </div>
+                </>
               )}
             </CardContent>
           </Card>
@@ -452,6 +579,32 @@ export default function ProfilePage() {
                 <MapPin className="h-4 w-4 mr-2" />
                 Go to Dashboard
               </Button>
+
+              {/* Card Security Actions */}
+              <div className="border-t pt-3 space-y-3">
+                <h4 className="text-sm font-medium text-muted-foreground mb-2">Card Security</h4>
+                {isCardBlocked() ? (
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start text-green-700 border-green-200 hover:bg-green-50"
+                    onClick={() => setShowUnblockDialog(true)}
+                    disabled={blockingCard}
+                  >
+                    <Unlock className="h-4 w-4 mr-2" />
+                    {blockingCard ? 'Processing...' : 'Unblock Card'}
+                  </Button>
+                ) : (
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start text-red-700 border-red-200 hover:bg-red-50"
+                    onClick={() => setShowBlockDialog(true)}
+                    disabled={blockingCard}
+                  >
+                    <Lock className="h-4 w-4 mr-2" />
+                    {blockingCard ? 'Processing...' : 'Block Card'}
+                  </Button>
+                )}
+              </div>
             </CardContent>
           </Card>
 
@@ -496,6 +649,103 @@ export default function ProfilePage() {
           )}
         </div>
       </div>
+
+      {/* Block Card Dialog */}
+      {showBlockDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+            <div className="flex items-center space-x-2 mb-4">
+              <ShieldAlert className="h-5 w-5 text-red-600" />
+              <h3 className="text-lg font-semibold">Block Card</h3>
+            </div>
+            <p className="text-sm text-muted-foreground mb-4">
+              This will block your card and prevent it from being used for any transactions. 
+              Please provide a reason for blocking.
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium">Reason for blocking</label>
+                <Input
+                  value={blockReason}
+                  onChange={(e) => setBlockReason(e.target.value)}
+                  placeholder="e.g., Card lost, Card stolen, Suspicious activity"
+                  className="mt-1"
+                />
+              </div>
+              <div className="flex space-x-3">
+                <Button
+                  onClick={handleBlockCard}
+                  disabled={blockingCard || !blockReason.trim()}
+                  variant="destructive"
+                  className="flex-1"
+                >
+                  {blockingCard ? 'Blocking...' : 'Block Card'}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowBlockDialog(false);
+                    setBlockReason('');
+                    setError(null);
+                  }}
+                  disabled={blockingCard}
+                  className="flex-1"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Unblock Card Dialog */}
+      {showUnblockDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+            <div className="flex items-center space-x-2 mb-4">
+              <CheckCircle className="h-5 w-5 text-green-600" />
+              <h3 className="text-lg font-semibold">Unblock Card</h3>
+            </div>
+            <p className="text-sm text-muted-foreground mb-4">
+              This will unblock your card and allow it to be used for transactions again. 
+              Please provide a reason for unblocking.
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium">Reason for unblocking</label>
+                <Input
+                  value={unblockReason}
+                  onChange={(e) => setUnblockReason(e.target.value)}
+                  placeholder="e.g., Card found, Issue resolved, False alarm"
+                  className="mt-1"
+                />
+              </div>
+              <div className="flex space-x-3">
+                <Button
+                  onClick={handleUnblockCard}
+                  disabled={blockingCard || !unblockReason.trim()}
+                  className="flex-1"
+                >
+                  {blockingCard ? 'Unblocking...' : 'Unblock Card'}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowUnblockDialog(false);
+                    setUnblockReason('');
+                    setError(null);
+                  }}
+                  disabled={blockingCard}
+                  className="flex-1"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

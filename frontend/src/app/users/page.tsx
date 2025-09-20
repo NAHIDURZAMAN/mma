@@ -22,9 +22,17 @@ import {
   Navigation,
   History,
   Bus,
-  LogOut
+  LogOut,
+  Shield,
+  ShieldOff,
+  AlertTriangle,
+  CheckCircle,
+  X,
+  Ban,
+  Unlock
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
+import { apiService } from '@/lib/api';
 
 interface User {
   user_id: number;
@@ -34,6 +42,13 @@ interface User {
   card_id: string;
   balance: number;
   created_at: string;
+  is_blocked?: number | boolean;
+  blocked_at?: string;
+  blocked_reason?: string;
+  blocked_by?: string;
+  unblocked_at?: string;
+  unblocked_by?: string;
+  unblock_reason?: string;
 }
 
 interface CurrentTravel {
@@ -73,6 +88,13 @@ export default function UsersPage() {
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [expandedHistory, setExpandedHistory] = useState<{[key: number]: boolean}>({});
   const [socket, setSocket] = useState<Socket | null>(null);
+  const [blockingCardId, setBlockingCardId] = useState<string | null>(null);
+  const [blockingReason, setBlockingReason] = useState('');
+  const [showBlockDialog, setShowBlockDialog] = useState(false);
+  const [showUnblockDialog, setShowUnblockDialog] = useState(false);
+  const [unblockingCardId, setUnblockingCardId] = useState<string | null>(null);
+  const [unblockingReason, setUnblockingReason] = useState('');
+  const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
     // Initialize WebSocket connection
@@ -203,18 +225,118 @@ export default function UsersPage() {
 
   const getStatusColor = (balance: number) => {
     if (balance >= 50) return 'default';
-    if (balance >= 10) return 'secondary';
+    if (balance >= 20) return 'secondary';
     return 'destructive';
   };
 
   const getStatusText = (balance: number) => {
     if (balance >= 50) return 'Active';
-    if (balance >= 10) return 'Low Balance';
+    if (balance >= 20) return 'Low Balance';
     return 'Insufficient';
   };
 
   const handleUserClick = (userId: string) => {
     setSelectedUser(selectedUser === userId ? null : userId);
+  };
+
+  const handleBlockCard = async (user: User) => {
+    if (!blockingReason.trim()) {
+      alert('Please provide a reason for blocking the card');
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const response = await apiService.blockCard({
+        userId: user.user_id.toString(),
+        cardId: user.card_id,
+        reason: blockingReason.trim(),
+        blockedBy: 'ADMIN_PANEL'
+      });
+
+      if (response.success) {
+        // Update user in local state
+        setUsers(prevUsers => 
+          prevUsers.map(u => 
+            u.user_id === user.user_id 
+              ? { ...u, is_blocked: true, blocked_reason: blockingReason.trim() }
+              : u
+          )
+        );
+
+        // Close dialog and reset state
+        setShowBlockDialog(false);
+        setBlockingCardId(null);
+        setBlockingReason('');
+
+        alert(`Card ${user.card_id} has been blocked successfully. Email notification sent to ${user.email}.`);
+      } else {
+        alert(`Failed to block card: ${response.message}`);
+      }
+    } catch (error) {
+      console.error('Error blocking card:', error);
+      alert('Failed to block card. Please try again.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleUnblockCard = async (user: User) => {
+    if (!unblockingReason.trim()) {
+      alert('Please provide a reason for unblocking the card');
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const response = await apiService.unblockCard({
+        userId: user.user_id.toString(),
+        cardId: user.card_id,
+        reason: unblockingReason.trim(),
+        unblockedBy: 'ADMIN_PANEL'
+      });
+
+      if (response.success) {
+        // Update user in local state
+        setUsers(prevUsers => 
+          prevUsers.map(u => 
+            u.user_id === user.user_id 
+              ? { ...u, is_blocked: false, unblock_reason: unblockingReason.trim() }
+              : u
+          )
+        );
+
+        // Close dialog and reset state
+        setShowUnblockDialog(false);
+        setUnblockingCardId(null);
+        setUnblockingReason('');
+
+        alert(`Card ${user.card_id} has been unblocked successfully. Email notification sent to ${user.email}.`);
+      } else {
+        alert(`Failed to unblock card: ${response.message}`);
+      }
+    } catch (error) {
+      console.error('Error unblocking card:', error);
+      alert('Failed to unblock card. Please try again.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const openBlockDialog = (user: User) => {
+    setBlockingCardId(user.card_id);
+    setBlockingReason('');
+    setShowBlockDialog(true);
+  };
+
+  const openUnblockDialog = (user: User) => {
+    setUnblockingCardId(user.card_id);
+    setUnblockingReason('');
+    setShowUnblockDialog(true);
+  };
+
+  const isCardBlocked = (user: User) => {
+    return user.is_blocked === 1 || user.is_blocked === true;
   };
 
   if (loading) {
@@ -260,7 +382,7 @@ export default function UsersPage() {
               <div>
                 <p className="text-sm font-medium">Active Users</p>
                 <p className="text-2xl font-bold">
-                  {users.filter(u => u.balance >= 10).length}
+                  {users.filter(u => !isCardBlocked(u) && u.balance >= 20).length}
                 </p>
               </div>
             </div>
@@ -405,22 +527,40 @@ export default function UsersPage() {
                           <div className="flex items-center space-x-2">
                             <CreditCard className="h-4 w-4 text-muted-foreground" />
                             <span className="font-mono text-sm">{user.card_id}</span>
+                            {isCardBlocked(user) && (
+                              <div title="Card is blocked">
+                                <Shield className="h-4 w-4 text-red-500" />
+                              </div>
+                            )}
                           </div>
                           <div className="flex items-center justify-end space-x-2 mt-1">
                             <Wallet className="h-4 w-4 text-muted-foreground" />
                             <span className="font-semibold">৳{user.balance.toLocaleString()}</span>
                           </div>
                         </div>
-                        <Badge variant={getStatusColor(user.balance)}>
-                          {getStatusText(user.balance)}
-                        </Badge>
+                        <div className="flex flex-col space-y-2">
+                          <Badge variant={getStatusColor(user.balance)}>
+                            {getStatusText(user.balance)}
+                          </Badge>
+                          {isCardBlocked(user) ? (
+                            <Badge variant="destructive" className="bg-red-500 hover:bg-red-600">
+                              <Shield className="h-3 w-3 mr-1" />
+                              BLOCKED
+                            </Badge>
+                          ) : (
+                            <Badge variant="default" className="bg-green-500 hover:bg-green-600">
+                              <CheckCircle className="h-3 w-3 mr-1" />
+                              ACTIVE
+                            </Badge>
+                          )}
+                        </div>
                       </div>
                     </div>
 
                     {/* Expanded User Details */}
                     {isExpanded && (
                       <div className="border-t bg-muted/20 p-4">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                           <div>
                             <h4 className="font-semibold mb-2">User Information</h4>
                             <div className="space-y-2 text-sm">
@@ -484,6 +624,37 @@ export default function UsersPage() {
                                   )}
                                 </Badge>
                               </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Card Status:</span>
+                                {isCardBlocked(user) ? (
+                                  <Badge variant="destructive" className="bg-red-500 hover:bg-red-600">
+                                    <Shield className="h-3 w-3 mr-1" />
+                                    BLOCKED
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="default" className="bg-green-500 hover:bg-green-600">
+                                    <CheckCircle className="h-3 w-3 mr-1" />
+                                    ACTIVE
+                                  </Badge>
+                                )}
+                              </div>
+                              {isCardBlocked(user) && user.blocked_reason && (
+                                <div className="mt-2 p-2 bg-red-50 rounded border border-red-200">
+                                  <div className="flex items-center text-red-700 text-xs mb-1">
+                                    <AlertTriangle className="h-3 w-3 mr-1" />
+                                    <span>Blocked Details</span>
+                                  </div>
+                                  <div className="text-xs text-red-600">
+                                    <div>Reason: {user.blocked_reason}</div>
+                                    {user.blocked_at && (
+                                      <div>Blocked: {new Date(user.blocked_at).toLocaleString()}</div>
+                                    )}
+                                    {user.blocked_by && (
+                                      <div>By: {user.blocked_by}</div>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
                               {isUserOnline(user.user_id) && getCurrentTravelInfo(user.user_id) && (
                                 <div className="mt-2 p-2 bg-green-50 rounded border">
                                   <div className="flex items-center text-green-700 text-xs mb-1">
@@ -495,6 +666,71 @@ export default function UsersPage() {
                                     <div>Started: {new Date(getCurrentTravelInfo(user.user_id)?.created_at || '').toLocaleTimeString()}</div>
                                   </div>
                                 </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Card Security Controls */}
+                          <div>
+                            <h4 className="font-semibold mb-2">Card Security</h4>
+                            <div className="space-y-3">
+                              {isCardBlocked(user) ? (
+                                <>
+                                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                                    <div className="flex items-center mb-2">
+                                      <Shield className="h-4 w-4 text-red-600 mr-2" />
+                                      <span className="font-medium text-red-900">Card Blocked</span>
+                                    </div>
+                                    <p className="text-xs text-red-700 mb-3">
+                                      This card cannot be used for transportation services.
+                                    </p>
+                                    <Button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openUnblockDialog(user);
+                                      }}
+                                      size="sm"
+                                      variant="outline"
+                                      className="w-full border-green-300 text-green-700 hover:bg-green-50"
+                                    >
+                                      <Unlock className="h-3 w-3 mr-1" />
+                                      Unblock Card
+                                    </Button>
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                                    <div className="flex items-center mb-2">
+                                      <CheckCircle className="h-4 w-4 text-green-600 mr-2" />
+                                      <span className="font-medium text-green-900">Card Active</span>
+                                    </div>
+                                    <p className="text-xs text-green-700 mb-3">
+                                      Card is functioning normally and can be used for all services.
+                                    </p>
+                                  </div>
+                                  <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                                    <div className="flex items-center mb-2">
+                                      <AlertTriangle className="h-4 w-4 text-yellow-600 mr-2" />
+                                      <span className="font-medium text-yellow-900">Security Action</span>
+                                    </div>
+                                    <p className="text-xs text-yellow-700 mb-3">
+                                      Block this card if it's reported lost or stolen.
+                                    </p>
+                                    <Button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openBlockDialog(user);
+                                      }}
+                                      size="sm"
+                                      variant="destructive"
+                                      className="w-full"
+                                    >
+                                      <Ban className="h-3 w-3 mr-1" />
+                                      Block Card
+                                    </Button>
+                                  </div>
+                                </>
                               )}
                             </div>
                           </div>
@@ -585,6 +821,162 @@ export default function UsersPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Block Card Dialog */}
+      {showBlockDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+            <div className="flex items-center mb-4">
+              <Shield className="h-6 w-6 text-red-600 mr-2" />
+              <h3 className="text-lg font-semibold">Block Card</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              You are about to block card: <span className="font-mono font-medium">{blockingCardId}</span>
+            </p>
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-2">
+                Reason for blocking <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={blockingReason}
+                onChange={(e) => setBlockingReason(e.target.value)}
+                placeholder="e.g., Card reported lost, Security breach, Suspicious activity..."
+                className="w-full p-2 border rounded-md resize-none"
+                rows={3}
+                maxLength={500}
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                {blockingReason.length}/500 characters
+              </p>
+            </div>
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+              <div className="flex items-start">
+                <AlertTriangle className="h-4 w-4 text-yellow-600 mt-0.5 mr-2" />
+                <div className="text-sm">
+                  <p className="font-medium text-yellow-900">Warning</p>
+                  <p className="text-yellow-700">
+                    This card will be immediately blocked and cannot be used for any transactions. 
+                    An email notification will be sent to the user.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex space-x-3">
+              <Button
+                onClick={() => {
+                  setShowBlockDialog(false);
+                  setBlockingCardId(null);
+                  setBlockingReason('');
+                }}
+                variant="outline"
+                className="flex-1"
+                disabled={actionLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  const user = users.find(u => u.card_id === blockingCardId);
+                  if (user) handleBlockCard(user);
+                }}
+                variant="destructive"
+                className="flex-1"
+                disabled={actionLoading || !blockingReason.trim()}
+              >
+                {actionLoading ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Blocking...
+                  </>
+                ) : (
+                  <>
+                    <Ban className="h-4 w-4 mr-2" />
+                    Block Card
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Unblock Card Dialog */}
+      {showUnblockDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+            <div className="flex items-center mb-4">
+              <Unlock className="h-6 w-6 text-green-600 mr-2" />
+              <h3 className="text-lg font-semibold">Unblock Card</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              You are about to unblock card: <span className="font-mono font-medium">{unblockingCardId}</span>
+            </p>
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-2">
+                Reason for unblocking <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={unblockingReason}
+                onChange={(e) => setUnblockingReason(e.target.value)}
+                placeholder="e.g., Card found by user, Issue resolved, Investigation completed..."
+                className="w-full p-2 border rounded-md resize-none"
+                rows={3}
+                maxLength={500}
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                {unblockingReason.length}/500 characters
+              </p>
+            </div>
+            <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
+              <div className="flex items-start">
+                <CheckCircle className="h-4 w-4 text-green-600 mt-0.5 mr-2" />
+                <div className="text-sm">
+                  <p className="font-medium text-green-900">Confirmation</p>
+                  <p className="text-green-700">
+                    This card will be reactivated and can be used for all transportation services. 
+                    An email notification will be sent to the user.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex space-x-3">
+              <Button
+                onClick={() => {
+                  setShowUnblockDialog(false);
+                  setUnblockingCardId(null);
+                  setUnblockingReason('');
+                }}
+                variant="outline"
+                className="flex-1"
+                disabled={actionLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  const user = users.find(u => u.card_id === unblockingCardId);
+                  if (user) handleUnblockCard(user);
+                }}
+                variant="default"
+                className="flex-1 bg-green-600 hover:bg-green-700"
+                disabled={actionLoading || !unblockingReason.trim()}
+              >
+                {actionLoading ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Unblocking...
+                  </>
+                ) : (
+                  <>
+                    <Unlock className="h-4 w-4 mr-2" />
+                    Unblock Card
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
