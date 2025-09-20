@@ -1963,9 +1963,92 @@ export const sendRechargeConfirmationEmail = async (user, rechargeData) => {
   }
 }
 
+// Simple notification email function for card blocking/unblocking
+export const sendNotificationEmail = async (email, subject, message) => {
+  try {
+    const transporter = createTransporter()
+    
+    const notificationTemplate = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>${subject}</title>
+          <style>
+              body { 
+                  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+                  margin: 0; 
+                  padding: 20px; 
+                  background-color: #f8fafc; 
+              }
+              .container { 
+                  max-width: 600px; 
+                  margin: 0 auto; 
+                  background: white; 
+                  border-radius: 12px; 
+                  box-shadow: 0 4px 12px rgba(0,0,0,0.1); 
+                  overflow: hidden; 
+              }
+              .header { 
+                  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                  color: white; 
+                  padding: 30px; 
+                  text-align: center; 
+              }
+              .content { 
+                  padding: 30px; 
+                  line-height: 1.6; 
+                  color: #333; 
+              }
+              .footer { 
+                  background: #f8fafc; 
+                  padding: 20px; 
+                  text-align: center; 
+                  font-size: 12px; 
+                  color: #666; 
+              }
+          </style>
+      </head>
+      <body>
+          <div class="container">
+              <div class="header">
+                  <h1 style="margin: 0; font-size: 24px;">🚌 Smart Transit</h1>
+                  <p style="margin: 10px 0 0 0; opacity: 0.9;">${subject}</p>
+              </div>
+              <div class="content">
+                  ${message.split('\n').map(line => `<p style="margin: 0 0 15px 0;">${line}</p>`).join('')}
+              </div>
+              <div class="footer">
+                  This is an automated notification from Smart Transit System.<br>
+                  © 2024 Smart Transit. All rights reserved.
+              </div>
+          </div>
+      </body>
+      </html>
+    `
+    
+    const mailOptions = {
+      from: `"Smart Transit System" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: subject,
+      html: notificationTemplate
+    }
+
+    const info = await transporter.sendMail(mailOptions)
+    console.log('Notification email sent successfully:', info.messageId)
+    return { success: true, messageId: info.messageId }
+    
+  } catch (error) {
+    console.error('Error sending notification email:', error)
+    return { success: false, error: error.message }
+  }
+}
+
 export default {
   sendJourneyStartEmail,
   sendJourneyCompleteEmail,
   sendLowBalanceAlert,
-  sendRechargeConfirmationEmail
+  sendRechargeConfirmationEmail,
+  sendNotificationEmail
 }

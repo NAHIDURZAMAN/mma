@@ -1,5 +1,4 @@
 {
-  "type": "module",
   "scripts": {
     "start": "node openweb-websocket.js",
     "start:websocket": "node openweb-websocket.js",
@@ -9,6 +8,7 @@
     "test-db": "node test-db.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
     "axios": "^1.11.0",
     "bonjour": "^3.5.0",
     "cloudinary": "^1.41.0",

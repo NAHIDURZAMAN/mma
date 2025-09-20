@@ -3,7 +3,7 @@
 // Import sql from '../db.js' instead of using this config
 
 // Legacy Oracle DB configuration (deprecated)
-// module.exports = {
+// export default {
 //   user: 'SYSTEM',
 //   password: '12688',
 //   connectString: 'localhost:1521/ORCLCDB',
@@ -13,5 +13,5 @@
 module.exports = {
   // This config is deprecated - use sql from db.js instead
   deprecated: true,
-  message: "Use import sql from '../db.js' for PostgreSQL/Supabase connection"
+  message: "Use require('../db.js') for PostgreSQL/Supabase connection"
 };
