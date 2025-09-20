@@ -15,8 +15,10 @@ import { CreditCard, Plus, DollarSign, CheckCircle, XCircle, Loader2 } from 'luc
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
 
-// Load Stripe with publishable key
-const stripePromise = loadStripe('pk_test_51S8QamQ0Xqv5MH8v3BAILAy6h2cFuwwmpa8fDbwfvP0jQCds4Kewn3njdnaAsLtIesGrtO3ugvMbp0ASMH1CVNHx00NYvXf5SN')
+// Load Stripe with publishable key - Hardcoded for development
+// Note: This is a TEST key. For production, use live key (pk_live_...)
+// Updated to match backend secret key pair
+const stripePromise = loadStripe('pk_test_51QEK5eJqwXDBmKmPjHZJt7CKlKy2ygz4A1QlGH8Q3VbNcBgVfqWL6K9pF7t2E1K4T9xBfKd2J7l3H6rS5dW8c9x200sE9qJ4y2')
 
 interface RechargeFormProps {
   user: any
