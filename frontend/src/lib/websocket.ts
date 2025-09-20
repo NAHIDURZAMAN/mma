@@ -9,13 +9,20 @@ class WebSocketService {
 
   connect(url: string = "http://localhost:2000") {
     if (this.socket?.connected) {
+      console.log("WebSocket already connected");
       return this.socket;
     }
 
+    console.log(`Attempting to connect to WebSocket at ${url}`);
+    
     this.socket = io(url, {
       transports: ["websocket", "polling"],
       timeout: 20000,
       forceNew: true,
+      autoConnect: true,
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
     });
 
     this.socket.on("connect", () => {
@@ -49,6 +56,66 @@ class WebSocketService {
     this.socket.on("travel_update", (data) => {
       console.log("Travel update received:", data);
       this.emit("travel_update", data);
+    });
+
+    // Listen for stats updates
+    this.socket.on("stats_update", (data) => {
+      console.log("Stats update received:", data);
+      this.emit("stats_update", data);
+    });
+
+    // Listen for travel completion
+    this.socket.on("travel_completed", (data) => {
+      console.log("Travel completed received:", data);
+      this.emit("travel_completed", data);
+    });
+
+    // Listen for bus location updates
+    this.socket.on("bus_location_update", (data) => {
+      console.log("Bus location update received:", data);
+      this.emit("bus_location_update", data);
+    });
+
+    // Listen for vehicle position updates
+    this.socket.on("vehicle_position_update", (data) => {
+      console.log("Vehicle position update received:", data);
+      this.emit("vehicle_position_update", data);
+    });
+
+    // Listen for route updates from Smart Transit Simulation
+    this.socket.on("route_updated", (data) => {
+      console.log("Route updated received:", data);
+      this.emit("route_updated", data);
+    });
+
+    // Listen for simulation status updates
+    this.socket.on("simulation_status", (data) => {
+      console.log("Simulation status received:", data);
+      this.emit("simulation_status", data);
+    });
+
+    // Listen for route status changes
+    this.socket.on("route_status_changed", (data) => {
+      console.log("Route status changed received:", data);
+      this.emit("route_status_changed", data);
+    });
+
+    // Listen for security alerts
+    this.socket.on("security_alert", (data) => {
+      console.log("Security alert received:", data);
+      this.emit("security_alert", data);
+    });
+
+    // Listen for user creation events
+    this.socket.on("user_created", (data) => {
+      console.log("User created received:", data);
+      this.emit("user_created", data);
+    });
+
+    // Listen for balance updates
+    this.socket.on("balance_updated", (data) => {
+      console.log("Balance updated received:", data);
+      this.emit("balance_updated", data);
     });
 
     return this.socket;

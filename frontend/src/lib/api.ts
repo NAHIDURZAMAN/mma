@@ -189,6 +189,31 @@ class ApiService {
     }>("/api/analytics/overview");
   }
 
+  // Monitor operations
+  async getMonitorStats() {
+    return this.request<{
+      success: boolean;
+      data: {
+        totalUsers: number;
+        activePassengers: number;
+        currentPassengers: number;
+        totalRevenue: number;
+        totalTrips: number;
+        recentActivity: any[];
+        lastUpdated: string;
+      };
+    }>("/api/monitor/stats");
+  }
+
+  async getCurrentPassengers() {
+    return this.request<{
+      success: boolean;
+      data: any[];
+      count: number;
+      lastUpdated: string;
+    }>("/api/monitor/passengers");
+  }
+
   async getRevenueAnalytics() {
     return this.request<{
       success: boolean;
