@@ -301,6 +301,21 @@ io.on('connection', (socket) => {
   socket.on('simulation_status_update', (data) => {
     console.log('🚌 Simulation status update received:', data)
     
+    // Update vehicle GPS position from simulation if available
+    if (data.currentPosition && data.currentPosition.lat && data.currentPosition.lng) {
+      const newPosition = {
+        lat: data.currentPosition.lat,
+        lng: data.currentPosition.lng,
+        source: 'SIMULATION',
+        timestamp: new Date().toISOString()
+      }
+      
+      // Update the global vehicle position
+      updateVehiclePosition(newPosition)
+      
+      console.log(`🚌 Vehicle GPS updated from simulation: ${data.currentPosition.lat}, ${data.currentPosition.lng}`)
+    }
+    
     // Broadcast simulation status to all connected clients (including dashboard)
     socket.broadcast.emit('simulation_status', {
       isRunning: data.isRunning || false,
@@ -443,19 +458,30 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
       const providedLat = parseFloat(scanLat)
       const providedLng = parseFloat(scanLng)
       
-      // Check if the provided coordinates are just default values
+      // Define static coordinates that should be treated as "default"
+      const ARDUINO_STATIC_LAT = 23.7465  // Arduino's hardcoded coordinates
+      const ARDUINO_STATIC_LNG = 90.3765
+      
+      // Check if the provided coordinates are default/static values
       const isDefaultCoords = (providedLat === DEFAULT_LAT && providedLng === DEFAULT_LNG)
+      const isArduinoStaticCoords = (providedLat === ARDUINO_STATIC_LAT && providedLng === ARDUINO_STATIC_LNG)
+      const isStaticCoords = isDefaultCoords || isArduinoStaticCoords
       const hasUpdatedVehiclePosition = !(currentVehiclePosition.lat === DEFAULT_LAT && currentVehiclePosition.lng === DEFAULT_LNG)
       
-      if (isDefaultCoords && hasUpdatedVehiclePosition) {
-        // Arduino sent default coords, but we have real vehicle position - use vehicle position
+      if (isStaticCoords && hasUpdatedVehiclePosition) {
+        // Arduino/client sent static coords, but we have real vehicle position - use vehicle position
         vehicleLat = currentVehiclePosition.lat
         vehicleLng = currentVehiclePosition.lng
         coordinateSource = 'VEHICLE_POSITION_PREFERRED'
-        console.log(`📍 Arduino sent default GPS (${providedLat}, ${providedLng}), using real vehicle position: ${vehicleLat}, ${vehicleLng}`)
         
-      } else if (!isDefaultCoords) {
-        // Arduino sent real GPS coordinates - use them and update vehicle position
+        if (isArduinoStaticCoords) {
+          console.log(`📍 Arduino sent static GPS (${providedLat}, ${providedLng}), using real vehicle position: ${vehicleLat}, ${vehicleLng}`)
+        } else {
+          console.log(`📍 Client sent default GPS (${providedLat}, ${providedLng}), using real vehicle position: ${vehicleLat}, ${vehicleLng}`)
+        }
+        
+      } else if (!isStaticCoords) {
+        // Client sent real GPS coordinates - use them and update vehicle position
         vehicleLat = providedLat
         vehicleLng = providedLng
         coordinateSource = 'SCAN_REQUEST'
@@ -464,22 +490,12 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
         console.log(`📍 GPS coordinates received from ${deviceSource} scan: ${vehicleLat}, ${vehicleLng}`)
         
       } else {
-        // Arduino sent default coords and we don't have better vehicle position
-        // For testing: Allow default coordinates with a warning
-        vehicleLat = DEFAULT_LAT
-        vehicleLng = DEFAULT_LNG
-        coordinateSource = 'DEFAULT_FALLBACK'
-        console.log(`⚠️  WARNING: Using default GPS coordinates from ${deviceSource}. Consider updating with real GPS data.`)
-        
-        // Optional: Still return error if you want to enforce real GPS
-        // console.log(`🚫 REJECTING default GPS coordinates from ${deviceSource}. Waiting for real GPS data...`)
-        // return {
-        //   success: false,
-        //   message: 'GPS coordinates required',
-        //   action: 'warning_beep',
-        //   display: ['GPS Required', 'Send Real Location'],
-        //   error: 'Default GPS coordinates not allowed. Please send real GPS coordinates or update vehicle position via WebSocket.'
-        // }
+        // Client sent static coords and we don't have better vehicle position
+        // For testing: Allow static coordinates with a warning
+        vehicleLat = isArduinoStaticCoords ? ARDUINO_STATIC_LAT : DEFAULT_LAT
+        vehicleLng = isArduinoStaticCoords ? ARDUINO_STATIC_LNG : DEFAULT_LNG
+        coordinateSource = 'STATIC_FALLBACK'
+        console.log(`⚠️  WARNING: Using static GPS coordinates from ${deviceSource}. Consider updating with real GPS data.`)
       }
       
     } else {
@@ -650,34 +666,6 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
         method: 'DELETE'
       })
       
-        // Send journey completion email
-        try {
-          const fareDetails = {
-            total_cost: calculatedFare,
-            remaining_balance: newBalance,
-            duration_minutes: Math.round(journeyDurationMinutes)
-          }
-          
-          const journeyData = {
-            pick_point: travel.pick_point,
-            drop_point: dropOffLocationName,
-            travel_time: new Date().toISOString()
-          }
-          
-          await sendJourneyCompleteEmail(user, journeyData, fareDetails)
-          console.log(`Journey completion email sent to ${user.email}`)
-          
-          // Send low balance alert if balance is low (less than 100 BDT for 5km journey)
-          if (newBalance < 100) {
-            await sendLowBalanceAlert(user, newBalance)
-            console.log(`Low balance alert sent to ${user.email}`)
-          }
-          
-        } catch (emailError) {
-          console.error('Email sending failed:', emailError)
-          // Don't fail the transaction if email fails
-        }
-        
         // Remove passenger from bus
         passengersOnBus.delete(actualCardId)
         
@@ -691,7 +679,8 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
           action: 'travel_end'
         })
         
-        return {
+        // Prepare response data
+        const responseData = {
           success: true,
           message: 'Travel ended',
           action: 'success_beep',
@@ -700,8 +689,20 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
             `Distance: ${distance.toFixed(2)}km`,
             `Fare: ৳${calculatedFare}`,
             `Balance: ৳${newBalance.toFixed(2)}`
-          ],
-          user: {
+          ]
+        }
+        
+        // Add minimal user data for Arduino, full data for other devices
+        if (deviceSource === 'ARDUINO') {
+          // Minimal response for Arduino to prevent timeout
+          responseData.user = {
+            name: user.name,
+            balance: newBalance,
+            fare_deducted: calculatedFare
+          }
+        } else {
+          // Full response for web/frontend
+          responseData.user = {
             name: user.name,
             balance: newBalance,
             fare_deducted: calculatedFare,
@@ -712,6 +713,38 @@ async function handleRFIDScan(data, deviceSource = 'ARDUINO') {
             exit_coords: `${exitLat}, ${exitLng}`
           }
         }
+        
+        // Send emails asynchronously (non-blocking) after response
+        setImmediate(async () => {
+          try {
+            const fareDetails = {
+              total_cost: calculatedFare,
+              remaining_balance: newBalance,
+              duration_minutes: Math.round(journeyDurationMinutes)
+            }
+            
+            const journeyData = {
+              pick_point: travel.pick_point,
+              drop_point: dropOffLocationName,
+              travel_time: new Date().toISOString()
+            }
+            
+            await sendJourneyCompleteEmail(user, journeyData, fareDetails)
+            console.log(`Journey completion email sent to ${user.email}`)
+            
+            // Send low balance alert if balance is low (less than 100 BDT for 5km journey)
+            if (newBalance < 100) {
+              await sendLowBalanceAlert(user, newBalance)
+              console.log(`Low balance alert sent to ${user.email}`)
+            }
+            
+          } catch (emailError) {
+            console.error('Email sending failed:', emailError)
+            // Don't fail the transaction if email fails
+          }
+        })
+        
+        return responseData
       
     } else {
       // Start new travel - ORIGIN SCAN (using vehicle GPS position)

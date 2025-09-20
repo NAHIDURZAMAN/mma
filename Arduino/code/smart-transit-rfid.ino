@@ -19,7 +19,7 @@ const char *ssid = "Tushar";
 const char *password = "12345678";
 
 // Server configuration - mDNS only (no hardcoded IP)
-String serverHost = ""; // Will be discovered via mDNS
+String serverHost = "";      // Will be discovered via mDNS
 const int serverPort = 2000; // Updated to match openweb-websocket.js
 const char *endpoint = "/api/rfid/scan";
 const char *mdnsHostname = "smarttransit"; // mDNS hostname to discover
@@ -37,9 +37,9 @@ const int totalSeats = 40;       // Bus এর মোট আসন
 int currentPassengers = 0;       // বর্তমান যাত্রী সংখ্যা
 int availableSeats = totalSeats; // বাকি আসন
 unsigned long lastStatusUpdate = 0;
-unsigned long lastMdnsUpdate = 0; // Track mDNS rediscovery
+unsigned long lastMdnsUpdate = 0;                // Track mDNS rediscovery
 const unsigned long statusUpdateInterval = 5000; // 5 seconds
-const unsigned long mdnsUpdateInterval = 60000; // 60 seconds - rediscover server periodically
+const unsigned long mdnsUpdateInterval = 60000;  // 60 seconds - rediscover server periodically
 
 // RFID scanning variables
 String rfidData = "";
@@ -70,7 +70,7 @@ String extractCardID(String data);
 void handleCardRead(String cardID);
 void processValidCard(String cardID);
 void sendCardToServer(String cardID);
-void handleServerResponse(StaticJsonDocument<500> &doc);
+void handleServerResponse(StaticJsonDocument<600> &doc);
 void successBeep();
 void errorBeep();
 void openGate();
@@ -91,82 +91,89 @@ void initializeBusLocation()
 bool discoverSmartTransitServer()
 {
     Serial.println("=== Starting mDNS Discovery ===");
-    
+
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("Discovering...");
     lcd.setCursor(0, 1);
     lcd.print("Smart Transit");
-    
+
     // Start mDNS
-    if (!MDNS.begin("esp8266-rfid")) {
+    if (!MDNS.begin("esp8266-rfid"))
+    {
         Serial.println("Error setting up mDNS responder!");
         return false;
     }
     Serial.println("mDNS responder started as 'esp8266-rfid.local'");
-    
+
     // Query for HTTP services
     Serial.println("Querying for HTTP services...");
-    
+
     int n = MDNS.queryService("http", "tcp");
     delay(1000); // Give mDNS time to complete
     Serial.println("mDNS query done");
-    
-    if (n == 0) {
+
+    if (n == 0)
+    {
         Serial.println("No HTTP services found via mDNS");
         return false;
-    } 
-    else {
+    }
+    else
+    {
         Serial.println(String(n) + " HTTP service(s) found");
-        
-        for (int i = 0; i < n; ++i) {
+
+        for (int i = 0; i < n; ++i)
+        {
             String serviceName = MDNS.hostname(i);
             IPAddress serviceIP = MDNS.IP(i);
             int servicePort = MDNS.port(i);
-            
+
             Serial.println("Service " + String(i) + ": " + serviceName + ".local");
             Serial.println("IP: " + serviceIP.toString());
             Serial.println("Port: " + String(servicePort));
-            
+
             // Check if this is our Smart Transit server
             // Look for hostname containing "smarttransit" or port matching our server
-            if (serviceName.indexOf("smarttransit") >= 0 || 
+            if (serviceName.indexOf("smarttransit") >= 0 ||
                 serviceName.indexOf("Smart") >= 0 ||
                 serviceName.indexOf("transit") >= 0 ||
-                servicePort == serverPort) {
-                
+                servicePort == serverPort)
+            {
+
                 serverHost = serviceIP.toString();
                 Serial.println("Found Smart Transit server: " + serverHost + ":" + String(servicePort));
-                
+
                 lcd.clear();
                 lcd.setCursor(0, 0);
                 lcd.print("Server Found!");
                 lcd.setCursor(0, 1);
                 lcd.print(serverHost);
                 delay(2000);
-                
+
                 return true;
             }
         }
-        
+
         // If no exact match found, try the first service on our port
-        for (int i = 0; i < n; ++i) {
-            if (MDNS.port(i) == serverPort) {
+        for (int i = 0; i < n; ++i)
+        {
+            if (MDNS.port(i) == serverPort)
+            {
                 serverHost = MDNS.IP(i).toString();
                 Serial.println("Using service on correct port: " + serverHost + ":" + String(serverPort));
-                
+
                 lcd.clear();
                 lcd.setCursor(0, 0);
                 lcd.print("Server Found!");
                 lcd.setCursor(0, 1);
                 lcd.print(serverHost);
                 delay(2000);
-                
+
                 return true;
             }
         }
     }
-    
+
     Serial.println("Smart Transit server not found via mDNS");
     return false;
 }
@@ -176,24 +183,27 @@ bool testServerConnection()
 {
     WiFiClient client;
     HTTPClient http;
-    
+
     String testUrl = "http://" + serverHost + ":" + String(serverPort) + "/api/health";
-    
+
     Serial.println("Testing server connection: " + testUrl);
-    
+
     http.begin(client, testUrl);
     http.setTimeout(5000); // 5 second timeout
-    
+
     int httpResponseCode = http.GET();
     bool isConnected = (httpResponseCode == 200);
-    
-    if (isConnected) {
+
+    if (isConnected)
+    {
         String response = http.getString();
         Serial.println("Server health check passed: " + response.substring(0, 100));
-    } else {
+    }
+    else
+    {
         Serial.println("Server health check failed with code: " + String(httpResponseCode));
     }
-    
+
     http.end();
     return isConnected;
 }
@@ -264,16 +274,20 @@ void loop()
             bool mdnsSuccess = discoverSmartTransitServer();
             if (mdnsSuccess)
             {
-                if (serverHost != oldServerHost) {
+                if (serverHost != oldServerHost)
+                {
                     Serial.println("mDNS rediscovery found new server: " + serverHost);
-                } else {
+                }
+                else
+                {
                     Serial.println("mDNS rediscovery confirmed current server: " + serverHost);
                 }
             }
             else
             {
                 Serial.println("mDNS rediscovery failed - server may be offline");
-                if (serverHost == "") {
+                if (serverHost == "")
+                {
                     Serial.println("No server available - retrying WiFi connection...");
                     connectToWiFi();
                     return;
@@ -530,42 +544,46 @@ void connectToWiFi()
         lcd.setCursor(0, 1);
         lcd.print(WiFi.localIP());
         delay(2000);
-        
+
         // Try to discover server using mDNS (REQUIRED)
         bool mdnsSuccess = discoverSmartTransitServer();
-        
-        if (mdnsSuccess) {
+
+        if (mdnsSuccess)
+        {
             Serial.println("=== mDNS Discovery Successful ===");
             Serial.println("Server: " + serverHost + ":" + String(serverPort));
-            
+
             lcd.clear();
             lcd.setCursor(0, 0);
             lcd.print("mDNS: Found!");
             lcd.setCursor(0, 1);
             lcd.print(serverHost);
             delay(2000);
-            
+
             // Test server connectivity
             lcd.clear();
             lcd.setCursor(0, 0);
             lcd.print("Testing Server");
             lcd.setCursor(0, 1);
             lcd.print("Connection...");
-            
+
             bool serverOk = testServerConnection();
-            
-            if (serverOk) {
+
+            if (serverOk)
+            {
                 Serial.println("=== Server Connection Test: PASSED ===");
-                
+
                 lcd.clear();
                 lcd.setCursor(0, 0);
                 lcd.print("Server: Online");
                 lcd.setCursor(0, 1);
                 lcd.print("Ready to scan!");
                 delay(2000);
-            } else {
+            }
+            else
+            {
                 Serial.println("=== Server Connection Test: FAILED ===");
-                
+
                 lcd.clear();
                 lcd.setCursor(0, 0);
                 lcd.print("Server: Offline");
@@ -573,17 +591,19 @@ void connectToWiFi()
                 lcd.print("Check network");
                 delay(3000);
             }
-        } else {
+        }
+        else
+        {
             Serial.println("=== mDNS Discovery Failed ===");
             Serial.println("Cannot proceed without server discovery!");
-            
+
             lcd.clear();
             lcd.setCursor(0, 0);
             lcd.print("mDNS: FAILED");
             lcd.setCursor(0, 1);
             lcd.print("Check server!");
             delay(5000);
-            
+
             // Retry mDNS discovery
             Serial.println("Retrying mDNS discovery in 5 seconds...");
             delay(5000);
@@ -634,9 +654,10 @@ void sendCardToServer(String cardID)
     {
         Serial.println("No server discovered via mDNS - attempting discovery...");
         displayError("No Server", "Discovering...");
-        
+
         bool mdnsSuccess = discoverSmartTransitServer();
-        if (!mdnsSuccess) {
+        if (!mdnsSuccess)
+        {
             displayError("Server Error", "mDNS Failed");
             isProcessing = false;
             return;
@@ -647,6 +668,7 @@ void sendCardToServer(String cardID)
     unsigned long sendTime = millis();
 
     http.begin(wifiClient, serverHost.c_str(), serverPort, endpoint);
+    http.setTimeout(8000); // 8 second timeout for RFID scan requests
     http.addHeader("Content-Type", "application/json");
 
     // Create JSON payload with location data and unique timestamp
@@ -685,7 +707,7 @@ void sendCardToServer(String cardID)
         Serial.println(response);
 
         // Parse response
-        StaticJsonDocument<500> responseDoc;
+        StaticJsonDocument<600> responseDoc;
         DeserializationError error = deserializeJson(responseDoc, response);
 
         if (!error)
@@ -719,7 +741,7 @@ void sendCardToServer(String cardID)
     Serial.println("=== SCAN PROCESSING COMPLETE ===");
 }
 
-void handleServerResponse(StaticJsonDocument<500> &doc)
+void handleServerResponse(StaticJsonDocument<600> &doc)
 {
     String action = doc["action"];
     String message = doc["message"];
@@ -735,14 +757,52 @@ void handleServerResponse(StaticJsonDocument<500> &doc)
     // Display detailed message on LCD
     if (doc.containsKey("display"))
     {
-        String line1 = doc["display"][0];
-        String line2 = doc["display"][1];
+        JsonArray displayArray = doc["display"];
 
-        lcd.clear();
-        lcd.setCursor(0, 0);
-        lcd.print(line1);
-        lcd.setCursor(0, 1);
-        lcd.print(line2);
+        // Handle different message types based on array size
+        if (displayArray.size() >= 4 && message.indexOf("ended") >= 0)
+        {
+            // Journey completion - show fare information with multiple screens
+            String journeyComplete = displayArray[0]; // "Journey Complete"
+            String distance = displayArray[1];        // "Distance: X.XXkm"
+            String fare = displayArray[2];            // "Fare: ৳XX"
+            String balance = displayArray[3];         // "Balance: ৳XXX"
+
+            // Screen 1: Journey Complete + Distance
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print(journeyComplete.substring(0, 16));
+            lcd.setCursor(0, 1);
+            lcd.print(distance.substring(0, 16));
+            delay(2000);
+
+            // Screen 2: Thank you + Fare
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("Thank you!");
+            lcd.setCursor(0, 1);
+            lcd.print(fare.substring(0, 16));
+            delay(2500);
+
+            // Screen 3: Balance remaining
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print("Remaining:");
+            lcd.setCursor(0, 1);
+            lcd.print(balance.substring(9, 16)); // Remove "Balance: " prefix
+        }
+        else
+        {
+            // Default 2-line display for journey start or other messages
+            String line1 = displayArray[0];
+            String line2 = displayArray[1];
+
+            lcd.clear();
+            lcd.setCursor(0, 0);
+            lcd.print(line1.substring(0, 16));
+            lcd.setCursor(0, 1);
+            lcd.print(line2.substring(0, 16));
+        }
     }
     else if (success)
     {
@@ -779,20 +839,28 @@ void handleServerResponse(StaticJsonDocument<500> &doc)
     // Handle actions with improved feedback
     if (action == "success_beep" && success)
     {
-        successBeep();
-        openGate();
+        // For journey completion, open door after showing fare info
+        if (message.indexOf("ended") >= 0)
+        {
+            // Journey completion sequence
+            successBeep();
+            delay(500); // Brief pause
+            openGate(); // Open door for passenger exit
 
-        // Update passenger count based on journey type
-        if (message.indexOf("started") >= 0)
-        {
-            currentPassengers++; // Passenger entered
-            availableSeats = totalSeats - currentPassengers;
-        }
-        else if (message.indexOf("ended") >= 0)
-        {
-            currentPassengers--; // Passenger exited
+            // Update passenger count - passenger exited
+            currentPassengers--;
             if (currentPassengers < 0)
                 currentPassengers = 0;
+            availableSeats = totalSeats - currentPassengers;
+        }
+        else
+        {
+            // Journey start sequence
+            successBeep();
+            openGate(); // Open door for passenger entry
+
+            // Update passenger count - passenger entered
+            currentPassengers++;
             availableSeats = totalSeats - currentPassengers;
         }
     }
@@ -805,8 +873,16 @@ void handleServerResponse(StaticJsonDocument<500> &doc)
         // Just display message, no beep
     }
 
-    // Reset display after delay
-    delay(2500);              // Reduced from 4000ms
+    // For journey completion, delay longer to show all screens
+    if (message.indexOf("ended") >= 0 && success)
+    {
+        delay(2000); // Additional delay for journey completion screens
+    }
+    else
+    {
+        delay(2500); // Standard delay
+    }
+
     updateBusStatusDisplay(); // Show updated bus status
 }
 
@@ -832,10 +908,12 @@ void errorBeep()
 
 void openGate()
 {
-    // Rotate servo 90°, wait shorter time, then back to 0°
-    myServo.write(90);
-    delay(1500); // Reduced from 2000ms
-    myServo.write(0);
+    // Rotate servo 90° to open door, wait for passenger, then close
+    Serial.println("=== OPENING DOOR ===");
+    myServo.write(90); // Open door
+    delay(3000);       // Wait 3 seconds for passenger to pass through
+    myServo.write(0);  // Close door
+    Serial.println("=== DOOR CLOSED ===");
 }
 
 void displayError(String line1, String line2)
@@ -859,7 +937,8 @@ void displayError(String line1, String line2)
 void getBusStatusFromServer()
 {
     // Check if we have a valid server
-    if (serverHost == "" || serverHost.length() == 0) {
+    if (serverHost == "" || serverHost.length() == 0)
+    {
         Serial.println("No server available for bus status update");
         return;
     }
